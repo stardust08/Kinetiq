@@ -1,0 +1,109 @@
+name: CI
+
+# The certification job is the point of this file. The measurement work it guards was
+# found by harnesses, not by review, and every defect it caught could have shipped again
+# the moment someone changed a sign or a threshold. certify_accuracy.py exits non-zero
+# when any metric falls below its tolerance bar, so a regression fails here instead of
+# surfacing in a patient's report weeks later.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install
+        working-directory: backend
+        # The measurement code needs numpy and scipy only. requirements.txt pulls the
+        # whole application stack including mediapipe, which is large and unnecessary
+        # here - the pipeline runs pose estimation in the browser, not on the server.
+        run: pip install numpy scipy pytest pytest-asyncio python-dotenv pydantic pydantic-settings
+
+      - name: Metric and validation suites
+        working-directory: backend
+        run: python -m pytest app/core/validation app/core/metrics app/core/pose app/core/gait -q
+
+  certification:
+    name: Accuracy certification (>=96% within tolerance)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install numpy scipy
+
+      - name: Certify every metric against synthetic ground truth
+        working-directory: backend
+        # Fails the build if any metric drops below the bar. 120 subjects keeps the
+        # confidence interval tight enough that a real regression cannot hide in
+        # sampling noise, while still finishing in a couple of minutes.
+        run: python scripts/certify_accuracy.py --trials 120
+
+      - name: Certify range of motion
+        working-directory: backend
+        # Separate run because ROM is a different capture - one end-range hold per
+        # movement rather than one standing pose scored across every metric.
+        run: python scripts/certify_rom.py --trials 120
+
+      - name: Repeatability (informational)
+        working-directory: backend
+        # Not a gate. Minimal detectable change moves with the noise model, and a small
+        # shift is not a defect - but a large one is worth seeing in the log.
+        continue-on-error: true
+        run: python scripts/repeatability.py --subjects 15 --sessions 3
+
+  frontend:
+    name: Frontend typecheck and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck production source
+        working-directory: frontend
+        # A gate. `vite build` transpiles without typechecking, which is how this drifted
+        # far enough for one malformed JSX tag to hide 179 errors and for four components
+        # to dereference a nullable date. Production source is clean and must stay clean.
+        run: npm run typecheck
+
+      - name: Typecheck including tests (informational)
+        working-directory: frontend
+        # Not a gate yet: ~200 type errors remain in test files. Visible so the debt is
+        # tracked rather than forgotten, but it cannot block a merge today.
+        continue-on-error: true
+        run: npm run typecheck:all
+
+      - name: Tests (informational)
+        working-directory: frontend
+        # Not a gate yet either. 237 frontend tests fail on assertions that drifted from
+        # the UI long before this workflow existed. Turning this into a gate is the next
+        # piece of work; pretending it is one today would just train people to ignore a
+        # red build.
+        continue-on-error: true
+        run: npm test

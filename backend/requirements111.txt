@@ -1,0 +1,21 @@
+python-dotenv
+uvicorn
+prisma>=0.12.0
+fastapi[standard]
+pydantic-settings
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+pytest-asyncio
+
+# Pose processing dependencies (for clinical posture analysis)
+mediapipe==0.10.9
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+alembic>=1.12.0
+boto3

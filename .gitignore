@@ -1,0 +1,10 @@
+.kiro/
+.vscode
+.venv
+venv
+*.pyc
+__pycache__
+.DS_Store
+
+# local venv for metric-math tests (no mediapipe needed)
+backend/.venv-metrics/

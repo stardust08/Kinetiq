@@ -1,0 +1,17 @@
+{
+  // Typechecks the code that SHIPS.
+  //
+  // The test files carry ~200 pre-existing type errors. They are worth fixing, but they
+  // cannot gate CI today, and a gate nobody can turn green is a gate everyone learns to
+  // ignore. Production source is held to the full config; `npm run typecheck:all`
+  // includes the tests so the remaining debt stays visible rather than hidden.
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.spec.ts",
+    "src/**/*.spec.tsx",
+    "src/test/**"
+  ]
+}

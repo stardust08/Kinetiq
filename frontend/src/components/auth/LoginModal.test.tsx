@@ -1,0 +1,731 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { LoginModal } from './LoginModal';
+import * as authAPI from '../../api/auth';
+import { useAuthStore } from '../../store/authStore';
+
+// Mock the auth API
+vi.mock('../../api/auth', () => ({
+  sendOtp: vi.fn(),
+  verifyOtp: vi.fn(),
+}));
+
+// Mock the auth store
+vi.mock('../../store/authStore', () => ({
+  useAuthStore: vi.fn(),
+}));
+
+// Mock the OTPInput component to make it easier to test
+vi.mock('./OTPInput', () => ({
+  OTPInput: ({ value, onChange, disabled }: any) => (
+    <input
+      data-testid="otp-input"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      maxLength={6}
+    />
+  ),
+}));
+
+describe('LoginModal', () => {
+  const mockOnOpenChange = vi.fn();
+  const mockLogin = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (useAuthStore as any).mockReturnValue(mockLogin);
+  });
+
+  // Helper function to enter OTP
+  const enterOTP = async (container: HTMLElement, otp: string) => {
+    const otpInput = screen.getByTestId('otp-input');
+    await userEvent.type(otpInput, otp);
+  };
+
+  it('renders phone input step initially', () => {
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    expect(screen.getByText('Login')).toBeInTheDocument();
+    expect(screen.getByText('Enter your phone number to receive an OTP')).toBeInTheDocument();
+    expect(screen.getByLabelText('Phone Number')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send OTP' })).toBeInTheDocument();
+  });
+
+  it('shows error when phone is empty', async () => {
+    const user = userEvent.setup();
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const sendButton = screen.getByRole('button', { name: 'Send OTP' });
+    await user.click(sendButton);
+
+    expect(screen.getByText('Please enter a phone number')).toBeInTheDocument();
+    expect(authAPI.sendOtp).not.toHaveBeenCalled();
+  });
+
+  it('shows error when phone format is invalid', async () => {
+    const user = userEvent.setup();
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, 'invalid');
+
+    const sendButton = screen.getByRole('button', { name: 'Send OTP' });
+    await user.click(sendButton);
+
+    expect(screen.getByText('Please enter a valid phone number (e.g., +1234567890)')).toBeInTheDocument();
+    expect(authAPI.sendOtp).not.toHaveBeenCalled();
+  });
+
+  it('accepts valid phone number with country code', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+
+    const sendButton = screen.getByRole('button', { name: 'Send OTP' });
+    await user.click(sendButton);
+
+    await waitFor(() => {
+      expect(authAPI.sendOtp).toHaveBeenCalledWith('+1234567890', 'LOGIN');
+    });
+  });
+
+  it('accepts valid phone number without country code', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '1234567890');
+
+    const sendButton = screen.getByRole('button', { name: 'Send OTP' });
+    await user.click(sendButton);
+
+    await waitFor(() => {
+      expect(authAPI.sendOtp).toHaveBeenCalledWith('1234567890', 'LOGIN');
+    });
+  });
+
+  it('sends OTP and moves to verification step', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+
+    const sendButton = screen.getByRole('button', { name: 'Send OTP' });
+    await user.click(sendButton);
+
+    await waitFor(() => {
+      expect(authAPI.sendOtp).toHaveBeenCalledWith('+1234567890', 'LOGIN');
+    });
+
+    expect(screen.getByText('Enter the 6-digit code sent to your phone')).toBeInTheDocument();
+    expect(screen.getByText('Verification Code')).toBeInTheDocument();
+  });
+
+  it('shows error when OTP sending fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockRejectedValue({
+      response: { data: { message: 'Invalid phone number' } },
+    });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+
+    const sendButton = screen.getByRole('button', { name: 'Send OTP' });
+    await user.click(sendButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Invalid phone number')).toBeInTheDocument();
+    });
+  });
+
+  it('allows going back to phone input step', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    // Enter phone and send OTP
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Verification Code')).toBeInTheDocument();
+    });
+
+    // Click back button
+    const backButton = screen.getByRole('button', { name: 'Back' });
+    await user.click(backButton);
+
+    expect(screen.getByText('Enter your phone number to receive an OTP')).toBeInTheDocument();
+    expect(screen.getByLabelText('Phone Number')).toBeInTheDocument();
+  });
+
+  it('disables verify button when OTP is incomplete', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    // Enter phone and send OTP
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Verification Code')).toBeInTheDocument();
+    });
+
+    // Verify button should be disabled when OTP is empty
+    const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+    expect(verifyButton).toBeDisabled();
+  });
+
+  it('shows network error when sending OTP fails due to network', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockRejectedValue({
+      code: 'ERR_NETWORK',
+      message: 'Network Error',
+    });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Network error. Please check your connection and try again.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows timeout error when sending OTP times out', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockRejectedValue({
+      code: 'ECONNABORTED',
+      message: 'timeout of 5000ms exceeded',
+    });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Request timed out. Please try again.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows 404 error when phone number is not registered', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockRejectedValue({
+      response: { status: 404, data: { message: 'User not found' } },
+    });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Phone number not registered. Please sign up first.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows rate limit error when too many OTP requests', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockRejectedValue({
+      response: { status: 429, data: { message: 'Too many requests' } },
+    });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Too many attempts. Please try again later.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows server error when backend returns 500', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockRejectedValue({
+      response: { status: 500, data: { message: 'Internal server error' } },
+    });
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Server error. Please try again later.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows generic error for unknown errors when sending OTP', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockRejectedValue(new Error('Unknown error'));
+
+    render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('An unexpected error occurred. Please try again.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows network error when verifying OTP fails due to network', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+    vi.mocked(authAPI.verifyOtp).mockRejectedValue({
+      code: 'ERR_NETWORK',
+      message: 'Network Error',
+    });
+
+    const { container } = render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    // Send OTP
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Verification Code')).toBeInTheDocument();
+    });
+
+    // Enter OTP
+    await enterOTP(container, '123456');
+
+    // Wait for button to be enabled and click it
+    await waitFor(() => {
+      const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+      expect(verifyButton).not.toBeDisabled();
+    });
+
+    const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+    await user.click(verifyButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Network error. Please check your connection and try again.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows invalid OTP error when verification fails with 401', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+    vi.mocked(authAPI.verifyOtp).mockRejectedValue({
+      response: { status: 401, data: { message: 'Invalid OTP' } },
+    });
+
+    const { container } = render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    // Send OTP
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Verification Code')).toBeInTheDocument();
+    });
+
+    // Enter OTP
+    await enterOTP(container, '123456');
+
+    // Wait for button to be enabled and click it
+    await waitFor(() => {
+      const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+      expect(verifyButton).not.toBeDisabled();
+    });
+
+    const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+    await user.click(verifyButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Invalid or expired OTP. Please try again.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows rate limit error when too many OTP verification attempts', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+    vi.mocked(authAPI.verifyOtp).mockRejectedValue({
+      response: { status: 429, data: { message: 'Too many attempts' } },
+    });
+
+    const { container } = render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    // Send OTP
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Verification Code')).toBeInTheDocument();
+    });
+
+    // Enter OTP
+    await enterOTP(container, '123456');
+
+    // Wait for button to be enabled and click it
+    await waitFor(() => {
+      const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+      expect(verifyButton).not.toBeDisabled();
+    });
+
+    const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+    await user.click(verifyButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Too many attempts. Please request a new OTP.')).toBeInTheDocument();
+    });
+  });
+
+  it('clears error when going back to phone step', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+    vi.mocked(authAPI.verifyOtp).mockRejectedValue({
+      response: { status: 401, data: { message: 'Invalid OTP' } },
+    });
+
+    const { container } = render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+    // Send OTP
+    const phoneInput = screen.getByLabelText('Phone Number');
+    await user.type(phoneInput, '+1234567890');
+    await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Verification Code')).toBeInTheDocument();
+    });
+
+    // Enter OTP
+    await enterOTP(container, '123456');
+
+    // Wait for button to be enabled and click it
+    await waitFor(() => {
+      const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+      expect(verifyButton).not.toBeDisabled();
+    });
+
+    const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+    await user.click(verifyButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Invalid or expired OTP. Please try again.')).toBeInTheDocument();
+    });
+
+    // Go back
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+
+    // Error should be cleared
+    expect(screen.queryByText('Invalid or expired OTP. Please try again.')).not.toBeInTheDocument();
+  });
+
+  describe('Loading States', () => {
+    it('shows loading text on button while sending OTP', async () => {
+      const user = userEvent.setup();
+      let resolveOtp: (value: any) => void;
+      const otpPromise = new Promise((resolve) => {
+        resolveOtp = resolve;
+      });
+      vi.mocked(authAPI.sendOtp).mockReturnValue(otpPromise as any);
+
+      render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+      const phoneInput = screen.getByLabelText('Phone Number');
+      await user.type(phoneInput, '+1234567890');
+      await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+      // Button should show loading text
+      expect(screen.getByRole('button', { name: 'Sending...' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Send OTP' })).not.toBeInTheDocument();
+
+      // Resolve the promise
+      resolveOtp!({ message: 'OTP sent' });
+
+      await waitFor(() => {
+        expect(screen.getByText('Verification Code')).toBeInTheDocument();
+      });
+    });
+
+    it('disables phone input while sending OTP', async () => {
+      const user = userEvent.setup();
+      let resolveOtp: (value: any) => void;
+      const otpPromise = new Promise((resolve) => {
+        resolveOtp = resolve;
+      });
+      vi.mocked(authAPI.sendOtp).mockReturnValue(otpPromise as any);
+
+      render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+      const phoneInput = screen.getByLabelText('Phone Number') as HTMLInputElement;
+      await user.type(phoneInput, '+1234567890');
+      
+      expect(phoneInput).not.toBeDisabled();
+      
+      await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+      // Input should be disabled during loading
+      expect(phoneInput).toBeDisabled();
+
+      // Resolve the promise
+      resolveOtp!({ message: 'OTP sent' });
+
+      await waitFor(() => {
+        expect(screen.getByText('Verification Code')).toBeInTheDocument();
+      });
+    });
+
+    it('disables send button while sending OTP', async () => {
+      const user = userEvent.setup();
+      let resolveOtp: (value: any) => void;
+      const otpPromise = new Promise((resolve) => {
+        resolveOtp = resolve;
+      });
+      vi.mocked(authAPI.sendOtp).mockReturnValue(otpPromise as any);
+
+      render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+      const phoneInput = screen.getByLabelText('Phone Number');
+      await user.type(phoneInput, '+1234567890');
+      await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+      // Button should be disabled during loading
+      const sendingButton = screen.getByRole('button', { name: 'Sending...' });
+      expect(sendingButton).toBeDisabled();
+
+      // Resolve the promise
+      resolveOtp!({ message: 'OTP sent' });
+
+      await waitFor(() => {
+        expect(screen.getByText('Verification Code')).toBeInTheDocument();
+      });
+    });
+
+    it('shows loading text on button while verifying OTP', async () => {
+      const user = userEvent.setup();
+      vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+      
+      let resolveVerify: (value: any) => void;
+      const verifyPromise = new Promise((resolve) => {
+        resolveVerify = resolve;
+      });
+      vi.mocked(authAPI.verifyOtp).mockReturnValue(verifyPromise as any);
+
+      const { container } = render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+      // Send OTP
+      const phoneInput = screen.getByLabelText('Phone Number');
+      await user.type(phoneInput, '+1234567890');
+      await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Verification Code')).toBeInTheDocument();
+      });
+
+      // Enter OTP
+      await enterOTP(container, '123456');
+
+      // Wait for button to be enabled and click it
+      await waitFor(() => {
+        const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+        expect(verifyButton).not.toBeDisabled();
+      });
+
+      const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+      await user.click(verifyButton);
+
+      // Button should show loading text
+      expect(screen.getByRole('button', { name: 'Verifying...' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Verify OTP' })).not.toBeInTheDocument();
+
+      // Resolve the promise
+      resolveVerify!({ token: 'test-token', user: { id: '1', phone: '+1234567890' } });
+
+      await waitFor(() => {
+        expect(mockLogin).toHaveBeenCalled();
+      });
+    });
+
+    it('disables OTP input while verifying', async () => {
+      const user = userEvent.setup();
+      vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+      
+      let resolveVerify: (value: any) => void;
+      const verifyPromise = new Promise((resolve) => {
+        resolveVerify = resolve;
+      });
+      vi.mocked(authAPI.verifyOtp).mockReturnValue(verifyPromise as any);
+
+      const { container } = render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+      // Send OTP
+      const phoneInput = screen.getByLabelText('Phone Number');
+      await user.type(phoneInput, '+1234567890');
+      await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Verification Code')).toBeInTheDocument();
+      });
+
+      // Enter OTP
+      await enterOTP(container, '123456');
+
+      // Wait for button to be enabled
+      await waitFor(() => {
+        const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+        expect(verifyButton).not.toBeDisabled();
+      });
+
+      const otpInput = screen.getByTestId('otp-input');
+      expect(otpInput).not.toBeDisabled();
+
+      const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+      await user.click(verifyButton);
+
+      // OTP input should be disabled during loading
+      expect(otpInput).toBeDisabled();
+
+      // Resolve the promise
+      resolveVerify!({ token: 'test-token', user: { id: '1', phone: '+1234567890' } });
+
+      await waitFor(() => {
+        expect(mockLogin).toHaveBeenCalled();
+      });
+    });
+
+    it('disables verify and back buttons while verifying OTP', async () => {
+      const user = userEvent.setup();
+      vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+      
+      let resolveVerify: (value: any) => void;
+      const verifyPromise = new Promise((resolve) => {
+        resolveVerify = resolve;
+      });
+      vi.mocked(authAPI.verifyOtp).mockReturnValue(verifyPromise as any);
+
+      const { container } = render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+      // Send OTP
+      const phoneInput = screen.getByLabelText('Phone Number');
+      await user.type(phoneInput, '+1234567890');
+      await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Verification Code')).toBeInTheDocument();
+      });
+
+      // Enter OTP
+      await enterOTP(container, '123456');
+
+      // Wait for button to be enabled and click it
+      await waitFor(() => {
+        const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+        expect(verifyButton).not.toBeDisabled();
+      });
+
+      const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+      await user.click(verifyButton);
+
+      // Both buttons should be disabled during loading
+      const verifyingButton = screen.getByRole('button', { name: 'Verifying...' });
+      const backButton = screen.getByRole('button', { name: 'Back' });
+      expect(verifyingButton).toBeDisabled();
+      expect(backButton).toBeDisabled();
+
+      // Resolve the promise
+      resolveVerify!({ token: 'test-token', user: { id: '1', phone: '+1234567890' } });
+
+      await waitFor(() => {
+        expect(mockLogin).toHaveBeenCalled();
+      });
+    });
+
+    it('re-enables inputs after OTP send fails', async () => {
+      const user = userEvent.setup();
+      vi.mocked(authAPI.sendOtp).mockRejectedValue({
+        response: { status: 500, data: { message: 'Server error' } },
+      });
+
+      render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+      const phoneInput = screen.getByLabelText('Phone Number') as HTMLInputElement;
+      await user.type(phoneInput, '+1234567890');
+      await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Server error. Please try again later.')).toBeInTheDocument();
+      });
+
+      // Input and button should be re-enabled after error
+      expect(phoneInput).not.toBeDisabled();
+      const sendButton = screen.getByRole('button', { name: 'Send OTP' });
+      expect(sendButton).not.toBeDisabled();
+    });
+
+    it('re-enables inputs after OTP verification fails', async () => {
+      const user = userEvent.setup();
+      vi.mocked(authAPI.sendOtp).mockResolvedValue({ message: 'OTP sent' });
+      vi.mocked(authAPI.verifyOtp).mockRejectedValue({
+        response: { status: 401, data: { message: 'Invalid OTP' } },
+      });
+
+      const { container } = render(<LoginModal open={true} onOpenChange={mockOnOpenChange} />);
+
+      // Send OTP
+      const phoneInput = screen.getByLabelText('Phone Number');
+      await user.type(phoneInput, '+1234567890');
+      await user.click(screen.getByRole('button', { name: 'Send OTP' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Verification Code')).toBeInTheDocument();
+      });
+
+      // Enter OTP
+      await enterOTP(container, '123456');
+
+      // Wait for button to be enabled and click it
+      await waitFor(() => {
+        const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+        expect(verifyButton).not.toBeDisabled();
+      });
+
+      const verifyButton = screen.getByRole('button', { name: 'Verify OTP' });
+      await user.click(verifyButton);
+
+      await waitFor(() => {
+        expect(screen.getByText('Invalid or expired OTP. Please try again.')).toBeInTheDocument();
+      });
+
+      // Inputs and buttons should be re-enabled after error
+      const otpInput = screen.getByTestId('otp-input');
+      expect(otpInput).not.toBeDisabled();
+      const verifyButtonAfterError = screen.getByRole('button', { name: 'Verify OTP' });
+      const backButton = screen.getByRole('button', { name: 'Back' });
+      expect(verifyButtonAfterError).not.toBeDisabled();
+      expect(backButton).not.toBeDisabled();
+    });
+  });
+});

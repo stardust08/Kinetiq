@@ -1,0 +1,278 @@
+## Feature: PDF Report Generation + Clinical Metrics UI for Posture Analysis
+
+### Context
+I am working on a posture analysis app called Neura-Ai (located at /Users/wundrsight008/Neura-Ai).
+The app performs AI-based posture analysis and returns structured JSON data.
+The frontend is built with React/TypeScript.
+
+---
+
+### Feature 1: PDF Report Download
+
+Build a professional PDF report download feature triggered by a "Download Report" button.
+
+---
+
+### Data Available
+
+1. Posture analysis JSON (already received from API) containing:
+   - Patient/session metadata: id, userId, bookingId, analysisDate
+   - Posture measurements:
+     - cervicalAngle, headLateralFlexion, headRotation
+     - thoracicKyphosisAngle, lumbarLordosisAngle
+     - trunkAngle, trunkLateralShift
+     - shoulderHeightDiff, leftShoulderAngle, rightShoulderAngle, roundedShoulderAngle
+     - leftElbowAngle, rightElbowAngle
+     - leftHipAngle, rightHipAngle, pelvicObliquity, pelvicTiltAngle, hipHeightDiff
+     - leftKneeAngle, rightKneeAngle, kneeVarusValgus, qAngleLeft, qAngleRight
+     - footProgressionAngle, pronationSupinationLeft, pronationSupinationRight
+     - shoulderWidth, hipWidth, torsoLength
+     - leftArmLength, rightArmLength, leftLegLength, rightLegLength
+
+2. Captured Posture Frame Images — ALREADY AVAILABLE as URLs or base64
+   strings stored in existing app state or postureStore.
+   DO NOT generate new images.
+   DO NOT use html2canvas or any DOM-to-image conversion.
+   
+   The images are already rendered in the Captured Posture Frames
+   section of the UI. Each pose view (front, side, back) already
+   has exactly 3 image variants stored as src URLs or base64:
+
+   - capturedFrames.front.photoWithOverlay     → Photo + Angle + Skeleton
+   - capturedFrames.front.skeletalAnalysis      → Angle + Skeleton (no photo)
+   - capturedFrames.front.skeletonOnly          → Clean skeleton only
+
+   - capturedFrames.side.photoWithOverlay
+   - capturedFrames.side.skeletalAnalysis
+   - capturedFrames.side.skeletonOnly
+
+   - capturedFrames.back.photoWithOverlay
+   - capturedFrames.back.skeletalAnalysis
+   - capturedFrames.back.skeletonOnly
+
+   IMPORTANT: Before writing any logic, read the existing
+   postureStore or component state to find the exact variable
+   names where these image sources are stored, then use them
+   directly in the PDF template as <Image src={url} />.
+
+3. User-captured photo stored at best confidence frame
+   (already implemented and available in state).
+
+---
+
+### PDF Report Requirements
+
+#### Layout & Design
+- Professional medical/clinical report style
+- Clean white background with brand color #0EA5E9 as primary accent
+- Properly sectioned with headers and dividers
+- Page size: A4, portrait orientation
+
+---
+
+#### Report Sections (in order):
+
+**1. Header Section**
+- App name: "Neura-AI"
+- Report title: "Posture Analysis Report"
+- Report date: analysisDate formatted as DD MMM YYYY
+- Booking ID and Session ID
+
+**2. Patient / Session Info Table**
+- User ID
+- Booking ID
+- Service name from booking.service.name
+- Analysis date and time
+
+**3. Captured Posture Frames Section**
+
+Show images for FRONT VIEW, SIDE VIEW, BACK VIEW.
+For each view display 3 image columns in one horizontal row:
+
+  Column 1 — Photo + Angle + Skeleton
+  Source: capturedFrames.[view].photoWithOverlay
+  Label: "Captured Frame with Overlay"
+
+  Column 2 — Angle + Skeleton (no photo)
+  Source: capturedFrames.[view].skeletalAnalysis
+  Label: "Skeletal Analysis"
+
+  Column 3 — Skeleton Only
+  Source: capturedFrames.[view].skeletonOnly
+  Label: "Posture Model"
+
+Layout per view (repeat for front, side, back):
+┌──────────────────────────────────────────────────────┐
+│  FRONT VIEW                                          │
+│  [photoWithOverlay] [skeletalAnalysis] [skeletonOnly]│
+│  Label              Label              Label         │
+└──────────────────────────────────────────────────────┘
+
+Images are already available as src strings.
+Use directly as: <Image src={capturedFrames.front.photoWithOverlay} />
+
+**4. Posture Measurements Section**
+
+Display all metrics grouped into subsections.
+Each row: Metric Label | Value (°) | Status Badge
+
+Status Badge colors:
+  Green  = Normal
+  Yellow = Mild Deviation  
+  Red    = Severe Deviation
+
+Use these clinical reference thresholds for status:
+
+Head & Cervical:
+  - Cervical Angle: Normal 0-15°, Mild 15-25°, Severe >25°
+  - Head Lateral Flexion: Normal 0-5°, Mild 5-10°, Severe >10°
+  - Head Rotation: Normal 0-8°, Mild 8-15°, Severe >15°
+
+Trunk & Spine:
+  - Thoracic Kyphosis Angle: Normal 20-40°, Mild 40-50°, Severe >50°
+  - Lumbar Lordosis Angle: Normal 20-45°, Mild 45-60°, Severe >60°
+  - Trunk Angle: Normal 175-185°, Mild deviation ±10°, Severe >±10°
+  - Trunk Lateral Shift: Normal 0-1cm, Mild 1-3cm, Severe >3cm
+
+Shoulders:
+  - Shoulder Height Difference: Normal 0-1°, Mild 1-3°, Severe >3°
+  - Left/Right Shoulder Angle: Normal 10-20°, Mild 20-30°, Severe >30°
+  - Rounded Shoulder Angle: Normal 160-180°, Mild 140-160°, Severe <140°
+
+Arms & Elbows:
+  - Left/Right Elbow Angle: Normal 140-180°, Mild 120-140°, Severe <120°
+
+Hips & Pelvis:
+  - Left/Right Hip Angle: Normal 170-180°, Mild 160-170°, Severe <160°
+  - Pelvic Obliquity: Normal 0-2°, Mild 2-5°, Severe >5°
+  - Pelvic Tilt Angle: Normal 0-5°, Mild 5-10°, Severe >10°
+  - Hip Height Difference: Normal 0-1°, Mild 1-3°, Severe >3°
+
+Knees & Legs:
+  - Left/Right Knee Angle: Normal 170-180°, Mild 160-170°, Severe <160°
+  - Knee Varus/Valgus: Normal 0-5°, Mild 5-10°, Severe >10°
+  - Q-Angle Left/Right: Normal 0-20°, Mild 20-25°, Severe >25°
+
+Feet:
+  - Foot Progression Angle: Normal 10-30°, Mild 30-40°, Severe >40°
+  - Pronation/Supination Left/Right: Normal 10-30°, Mild 30-40°, Severe >40°
+
+Body Dimensions (display value only, no status needed):
+  - Shoulder Width, Hip Width, Torso Length
+  - Left/Right Arm Length, Left/Right Leg Length
+
+**5. Summary & Recommendations Section**
+- Auto-generate based on all metrics flagged as Mild or Severe
+- Display as bullet points:
+  "• Elevated cervical angle detected (value°) — Mild"
+  "• Thoracic kyphosis out of range (value°) — Severe"
+- Add one-line recommendation per flagged area
+
+**6. Footer (every page)**
+- Left: "Generated by Neura-AI"
+- Center: Page X of Y
+- Right: Generation date
+
+---
+
+### Technical Requirements
+- Use @react-pdf/renderer (NOT jsPDF — handles images and
+  layout natively in React, better for this use case)
+- Images already available as URLs or base64 — use directly
+  as <Image src={url} /> inside the PDF template
+- No html2canvas needed
+- Fonts must be embedded using @react-pdf/renderer Font.register
+- Trigger: <button>Download Report</button> with loading state
+- Must work on mobile and desktop browsers
+- No paid libraries
+- Entirely frontend — no backend or server-side rendering
+
+---
+
+### Feature 2: Replace Placeholder with Clinical Metrics UI
+
+#### Current placeholder to replace:
+```tsx
+{/* MetricsDisplay component will be implemented in task 16.6 */}
+<div className="text-center py-16 bg-gray-50 rounded-lg 
+     border-2 border-dashed border-gray-300">
+  <svg className="w-16 h-16 mx-auto text-gray-400 mb-4" .../>
+  <p className="text-lg font-medium text-gray-700 mb-2">
+    Results Display Coming Soon
+  </p>
+  <p className="text-sm text-gray-500">
+    Component will be implemented in task 16.6
+  </p>
+</div>
+```
+
+#### Replace with: ClinicalMetricsDisplay Component
+
+Build a ClinicalMetricsDisplay component that renders
+EXACTLY the same UI style as the existing
+"Assessment → View More → Clinical Metrics" section in the app.
+
+Requirements:
+- Match the existing clinical metrics UI exactly —
+  same cards, layout, colors, typography, section headers
+- All data comes from the posture analysis JSON already in state
+- Group metrics into the same 8 categories as the PDF section
+- Each metric card must show:
+  - Metric name
+  - Value with unit (°)
+  - Status badge: Normal / Mild / Severe with matching colors
+  - Mini progress bar or visual indicator if present in existing UI
+- Sections must be collapsible if existing UI has that behaviour
+- Fully responsive — mobile and desktop
+- No hardcoded values — all data driven from JSON prop
+
+Integration:
+- Replace the placeholder div with:
+  <ClinicalMetricsDisplay data={postureAnalysisData} />
+- Accept postureAnalysisData as a typed TypeScript prop
+- Export as named component from:
+  src/components/ClinicalMetricsDisplay.tsx
+
+---
+
+### Deliverables
+
+1. src/utils/generatePostureReport.ts
+   - PDF generation trigger function
+   - Reference range thresholds for all metrics
+   - Status calculation logic: Normal / Mild / Severe
+   - Auto-summary builder from flagged metrics
+
+2. src/components/PostureReportTemplate.tsx
+   - Full @react-pdf/renderer PDF template
+   - All 6 sections implemented
+   - Uses existing image URLs directly from state/store
+   - 3 views × 3 image columns layout
+
+3. src/components/DownloadReportButton.tsx
+   - Button component wired to PDF generation
+   - Shows loading spinner while PDF generates
+   - Accepts postureData and capturedFrames as props
+
+4. src/components/ClinicalMetricsDisplay.tsx
+   - Full clinical metrics UI component
+   - Matches existing assessment UI exactly
+   - Replaces the placeholder div
+   - Typed props using PostureAnalysis interface
+
+5. src/types/postureAnalysis.ts
+   - TypeScript interfaces for PostureAnalysis data
+   - CapturedFrames interface with all 9 image src fields
+   - MetricStatus type: "Normal" | "Mild" | "Severe"
+
+---
+
+### Important Rules
+- Read existing postureStore and component state FIRST
+  to find exact variable names before writing any new code
+- Do NOT modify any existing working components
+- Only add new files and replace the placeholder div
+- Keep PDF template and generation logic in separate files
+- Add JSDoc comments to all exported functions
+- All clinical thresholds must follow standard
+  physiotherapy reference ranges

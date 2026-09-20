@@ -1,0 +1,451 @@
+// =========================
+// Generator & Datasource
+// =========================
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+
+// =========================
+// Enums
+// =========================
+enum UserRole {
+  USER
+  CLINICIAN
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum OtpType {
+  LOGIN
+  SIGNUP
+  RESET
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentType {
+  FULL
+  PARTIAL
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// =========================
+// Models
+// =========================
+
+model User {
+  id                     String        @id @default(uuid())
+  email                  String?       @unique
+  name                   String?
+  role                   UserRole
+  phone                  String        @unique
+  passwordHash           String?
+  status                 UserStatus    @default(ACTIVE)
+  createdAt              DateTime      @default(now())
+  profileImage           String?
+  sessionCount           Int           @default(0)
+  notificationPreference Json?
+
+  carts                  Cart[]
+  bookings               Booking[]
+  slotLocks       SlotLock[]  @relation("UserSlotLocks")
+  subscriptions          Subscription[]
+  reports                Report[]
+  payments               Payment[]
+  postureAnalyses        PostureAnalysis[]
+  gaitAnalyses           GaitAnalysis[]
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  imageUrl    String?
+  status      String?
+  createdAt   DateTime @default(now())
+
+  services    Service[]
+  
+  @@index([status])
+  @@index([slug])
+}
+
+model Service {
+  id              String      @id @default(uuid())
+  categoryId      String
+  name            String
+  slug            String      @unique
+  description     String?
+  
+  // Pricing
+  basePrice       Float
+  salePrice       Float?
+  discount        Float?
+  
+  // Payment Configuration
+  paymentType     PaymentType @default(FULL)
+  advancePercent  Float?
+  advanceAmount   Float?
+  
+  // Service Metadata
+  duration        String?
+  serviceType     String?
+  features        Json?
+  reviewCount     Int         @default(0)
+  deliveryMode    String?
+  sessionCount    Int?
+  slotLocks       SlotLock[]
+  
+  // AI Screening Configuration
+  includedScreeningCount  Int?
+  
+  createdAt       DateTime    @default(now())
+
+  category        Category         @relation(fields: [categoryId], references: [id])
+  bookings        Booking[]
+  subscriptions   Subscription[]
+  
+  @@index([categoryId])
+  @@index([slug])
+  @@index([paymentType])
+}
+
+model SlotLock {
+  id              String    @id @default(uuid())
+  serviceId       String
+  userId          String
+  slotTime        DateTime
+  
+  lockedAt        DateTime  @default(now())
+  expiresAt       DateTime
+  isReleased      Boolean   @default(false)
+  
+  service         Service   @relation(fields: [serviceId], references: [id])
+  user            User      @relation("UserSlotLocks", fields: [userId], references: [id])
+  
+  @@unique([serviceId, slotTime])
+  @@index([expiresAt, isReleased])
+  @@index([userId, isReleased])
+  @@index([serviceId, slotTime])
+}
+
+model Cart {
+  id        String   @id @default(uuid())
+  userId    String
+  cartValue Float    @default(0)
+
+  items     Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Otp {
+  id        String   @id @default(uuid())
+  otp       String
+  phoneNo   String
+  type      OtpType
+  isUsed    Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([phoneNo])
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  userId          String
+  
+  totalAmount     Float
+  paidAmount      Float
+  remainingAmount Float         @default(0)
+  
+  status          PaymentStatus @default(PENDING)
+  paymentMethod   String?
+  transactionId   String?
+  
+  createdAt       DateTime      @default(now())
+  completedAt     DateTime?
+  
+  user            User          @relation(fields: [userId], references: [id])
+  bookings        Booking[]
+  
+  @@index([userId])
+  @@index([transactionId])
+}
+
+model Booking {
+  id          String        @id @default(uuid())
+  userId      String
+  serviceId   String
+  paymentId   String
+  clinicianId String?
+  
+  totalAmount     Float
+  paidAmount      Float
+  remainingAmount Float     @default(0)
+  
+  time        DateTime
+  createdAt   DateTime      @default(now())
+  status      BookingStatus @default(PENDING)
+  description String?
+  
+  // AI Screening Count Management
+  totalScreeningCount     Int       @default(0)
+  usedScreeningCount      Int       @default(0)
+  remainingScreeningCount Int       @default(0)
+
+  user        User          @relation(fields: [userId], references: [id])
+  service     Service       @relation(fields: [serviceId], references: [id])
+  payment     Payment       @relation(fields: [paymentId], references: [id])
+  reports     Report[]
+  postureAnalyses PostureAnalysis[]
+  gaitAnalyses GaitAnalysis[]
+
+  @@index([userId])
+  @@index([paymentId])
+  @@index([serviceId, time, status])
+  @@index([userId, remainingScreeningCount])
+  @@index([time])
+}
+
+model Report {
+  id          String   @id @default(uuid())
+  userId      String
+  bookingId   String
+  reportUrl   String
+  description String?
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+  booking     Booking  @relation(fields: [bookingId], references: [id])
+
+  @@index([bookingId])
+}
+
+model Subscription {
+  id           String   @id @default(uuid())
+  userId       String
+  serviceId    String
+  amount       Float
+  createdAt    DateTime @default(now())
+  startAt      DateTime
+  expirationAt DateTime
+
+  user         User     @relation(fields: [userId], references: [id])
+  service      Service  @relation(fields: [serviceId], references: [id])
+
+  @@index([userId])
+  @@index([serviceId])
+}
+
+model PostureAnalysis {
+  id                      String    @id @default(uuid())
+  userId                  String
+  bookingId               String
+  analysisDate            DateTime  @default(now())
+  
+  // I. Global Posture (8 metrics)
+  fhdPixels               Float?
+  cervicalAngle           Float?
+  headLateralFlexion      Float?
+  headRotation            Float?
+  thoracicKyphosisAngle   Float?
+  lumbarLordosisAngle     Float?
+  trunkLateralShift       Float?
+  trunkAngle              Float?
+  
+  // II. Shoulder & Arm (6 metrics)
+  leftShoulderAngle       Float?
+  rightShoulderAngle      Float?
+  shoulderHeightDiff      Float?
+  roundedShoulderAngle    Float?
+  leftElbowAngle          Float?
+  rightElbowAngle         Float?
+  
+  // III. Pelvis & Hip (5 metrics)
+  leftHipAngle            Float?
+  rightHipAngle           Float?
+  pelvicObliquity         Float?
+  pelvicTiltAngle         Float?
+  hipHeightDiff           Float?
+  
+  // IV. Lower Extremity (9 metrics)
+  leftKneeAngle           Float?
+  rightKneeAngle          Float?
+  kneeVarusValgus         Float?
+  kneeFlexionNeutral      Float?
+  qAngleLeft              Float?
+  qAngleRight             Float?
+  footProgressionAngle    Float?
+  pronationSupinationLeft Float?
+  pronationSupinationRight Float?
+  
+  // V. Body Proportions (7 metrics)
+  shoulderWidth           Float?
+  hipWidth                Float?
+  torsoLength             Float?
+  leftArmLength           Float?
+  rightArmLength          Float?
+  leftLegLength           Float?
+  rightLegLength          Float?
+  
+  // Raw Data & Status
+  landmarksData           Json?
+  capturedPoses           String?   // Comma-separated list: "front,side,back"
+
+  // v2 metric payload: per-metric value + status + confidence + citation.
+  // The legacy Float columns above are retained for backward compatibility and are
+  // now nullable, because a metric that could not be measured must read as null
+  // rather than as a fabricated default. New readers should use metricsJson.
+  metricsJson             Json?
+  schemaVersion           Int       @default(1)
+  qualityFlags            Json?     // capture-quality warnings, e.g. assumed aspect ratio
+
+  status                  String    @default("completed")
+  isActive                Boolean   @default(true)
+  
+  // Relations
+  user                    User      @relation(fields: [userId], references: [id])
+  booking                 Booking   @relation(fields: [bookingId], references: [id])
+  poseLandmarks           PoseLandmarks[]
+  
+  @@index([userId])
+  @@index([bookingId])
+  @@index([analysisDate])
+  @@index([status])
+  @@index([bookingId, analysisDate])
+}
+
+model PoseLandmarks {
+  id            String   @id @default(cuid())
+  analysisId    String
+  poseType      String   // 'front', 'side', 'back'
+  landmarksData Json?    // Landmarks data for this specific pose
+  imageData     String?  // Base64 encoded image of the pose
+  frameCount    Int      // Number of frames captured for this pose
+  createdAt     DateTime @default(now())
+
+  // Relations
+  analysis      PostureAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@index([analysisId])
+  @@index([poseType])
+  @@unique([analysisId, poseType])
+}
+
+model GaitAnalysis {
+  id           String   @id @default(uuid())
+  userId       String
+  bookingId    String
+  analysisDate DateTime @default(now())
+
+  // I. Temporal Parameters (6)
+  cadence               Float?  // steps/minute
+  strideTimeLeft        Float?  // seconds
+  strideTimeRight       Float?  // seconds
+  stancePhasePercent    Float?  // % of gait cycle
+  swingPhasePercent     Float?  // % of gait cycle
+  doubleSupportTime     Float?  // seconds
+
+  // II. Spatial Parameters (6)
+  strideLength          Float?  // normalized 0-1
+  stepLengthLeft        Float?  // normalized
+  stepLengthRight       Float?  // normalized
+  stepWidth             Float?  // normalized
+  walkingSpeed          Float?  // normalized units/sec
+  stepLengthSymmetry    Float?  // 0-100%
+
+  // III. Kinematic Parameters (12)
+  hipFlexionMax              Float?  // degrees
+  hipExtensionMax            Float?  // degrees
+  hipFlexionRom              Float?  // degrees (range of motion)
+  kneeFlexionMax             Float?  // degrees
+  kneeExtensionMin           Float?  // degrees
+  kneeFlexionRom             Float?  // degrees
+  leftKneeAngleAvg           Float?  // degrees
+  rightKneeAngleAvg          Float?  // degrees
+  ankleDorsiflexionMax       Float?  // degrees
+  footProgressionAngleLeft   Float?  // degrees
+  footProgressionAngleRight  Float?  // degrees
+  armSwingAmplitude          Float?  // normalized pixels
+
+  // IV. Trunk & Pelvis (4)
+  trunkLateralSway      Float?  // normalized pixels range
+  trunkSagittalLean     Float?  // degrees
+  pelvicObliquityRange  Float?  // degrees
+  armSwingSymmetry      Float?  // 0-100%
+
+  // V. Functional Scores (4)
+  gaitSymmetryIndex  Float?  // 0-100%
+  stepRegularity     Float?  // 0-1.0
+  gaitQualityScore   Float?  // 0-100
+  gaitCycleCount     Int?    // number of complete cycles
+
+  // Meta
+  capturedViews String?  // "front,leftside,rightside"
+  totalFrames   Int?
+
+  // v2 metric payload - see the note on PostureAnalysis.metricsJson.
+  metricsJson   Json?
+  schemaVersion Int     @default(1)
+  qualityFlags  Json?
+  cyclesAnalysed Int?
+
+  status        String  @default("completed")
+  isActive      Boolean @default(true)
+
+  user       User        @relation(fields: [userId], references: [id])
+  booking    Booking     @relation(fields: [bookingId], references: [id])
+  gaitFrames GaitFrames[]
+
+  @@index([userId])
+  @@index([bookingId])
+  @@index([analysisDate])
+  @@index([bookingId, analysisDate])
+}
+
+model GaitFrames {
+  id         String @id @default(cuid())
+  analysisId String
+  viewType   String  // 'front', 'leftside', 'rightside'
+
+  imageData           String?  // base64 best-frame background image
+  annotatedTimeSeries Json?    // [{frameIndex, landmarks:{0:[x,y,z,v],...}, gaitPhase, timestamp}]
+  heelStrikes         Json?    // {"left": [12,45,78,...], "right": [28,61,94,...]}
+  frameCount          Int
+
+  createdAt DateTime @default(now())
+
+  analysis GaitAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@index([analysisId])
+  @@unique([analysisId, viewType])
+}

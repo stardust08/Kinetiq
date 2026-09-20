@@ -48,6 +48,40 @@ const GaitSVG = () => (
   </svg>
 );
 
+const ROMSVG = () => (
+  <svg viewBox="0 0 140 160" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+    {/* goniometer arc — the instrument this screening replaces */}
+    <path d="M62 52 A 52 52 0 0 1 114 104" stroke="#A78BFA" strokeWidth="1.5" strokeDasharray="4 3" fill="none" opacity="0.55" />
+    <path d="M62 52 A 34 34 0 0 1 96 86" stroke="#E879F9" strokeWidth="1.5" fill="none" opacity="0.45" />
+
+    <circle cx="62" cy="18" r="11" fill="#8B5CF6" opacity="0.9" />
+    <line x1="62" y1="29" x2="62" y2="38" stroke="#8B5CF6" strokeWidth="5" strokeLinecap="round" />
+    <rect x="53" y="38" width="18" height="30" rx="8" fill="#8B5CF6" opacity="0.85" />
+    <rect x="49" y="66" width="26" height="10" rx="5" fill="#7C3AED" opacity="0.8" />
+
+    {/* near arm held at end range — the measured limb */}
+    <line x1="62" y1="44" x2="92" y2="30" stroke="#C084FC" strokeWidth="5" strokeLinecap="round" />
+    <line x1="92" y1="30" x2="116" y2="24" stroke="#C084FC" strokeWidth="4" strokeLinecap="round" />
+    <circle cx="62" cy="44" r="3.5" fill="#F0ABFC" />
+    <circle cx="92" cy="30" r="3" fill="#F0ABFC" opacity="0.9" />
+
+    {/* far arm at rest, for the left/right comparison the report leads with */}
+    <line x1="56" y1="44" x2="40" y2="62" stroke="#7C3AED" strokeWidth="4" strokeLinecap="round" opacity="0.55" />
+    <line x1="40" y1="62" x2="34" y2="80" stroke="#7C3AED" strokeWidth="3.5" strokeLinecap="round" opacity="0.55" />
+
+    <line x1="56" y1="76" x2="52" y2="106" stroke="#7C3AED" strokeWidth="7" strokeLinecap="round" />
+    <line x1="52" y1="106" x2="50" y2="134" stroke="#7C3AED" strokeWidth="7" strokeLinecap="round" />
+    <line x1="68" y1="76" x2="72" y2="106" stroke="#7C3AED" strokeWidth="7" strokeLinecap="round" />
+    <line x1="72" y1="106" x2="74" y2="134" stroke="#7C3AED" strokeWidth="7" strokeLinecap="round" />
+
+    {/* reference vertical the angle is read against */}
+    <line x1="62" y1="44" x2="62" y2="138" stroke="#A78BFA" strokeWidth="1.5" strokeDasharray="4 3" strokeLinecap="round" opacity="0.5" />
+
+    <text x="99" y="60" fontSize="10" fill="#E879F9" fontWeight="700">°</text>
+    <text x="70" y="152" textAnchor="middle" fontSize="9" fill="#C084FC" fontWeight="700">Range of Motion</text>
+  </svg>
+);
+
 // ─── Card config ──────────────────────────────────────────────────────────────
 const CARDS = [
   {
@@ -55,7 +89,7 @@ const CARDS = [
     title: "Posture Analysis",
     subtitle: "Static alignment across 4 views — standing still",
     stats: [
-      { icon: "📐", label: "33 metrics" },
+      { icon: "📐", label: "13 metrics" },
       { icon: "📷", label: "4 views" },
       { icon: "⏱", label: "~40 sec" },
     ],
@@ -76,7 +110,7 @@ const CARDS = [
     title: "Gait Analysis",
     subtitle: "Dynamic walking analysis across 3 views — in motion",
     stats: [
-      { icon: "🦾", label: "32 metrics" },
+      { icon: "🦾", label: "14 metrics" },
       { icon: "📷", label: "3 views" },
       { icon: "⏱", label: "~15 sec" },
     ],
@@ -92,6 +126,27 @@ const CARDS = [
     route: "/gait-analysis",
     tag: "New",
   },
+  {
+    type: "rom" as const,
+    title: "Range of Motion",
+    subtitle: "How far each joint travels — 10 held positions, both sides",
+    stats: [
+      { icon: "📏", label: "11 metrics" },
+      { icon: "🤸", label: "10 movements" },
+      { icon: "⏱", label: "~2 min" },
+    ],
+    accentColor: "#8B5CF6",
+    glowColor: "rgba(139,92,246,0.35)",
+    borderColor: "rgba(139,92,246,0.3)",
+    bgFrom: "rgba(139,92,246,0.06)",
+    bgTo: "rgba(217,70,239,0.03)",
+    badgeColor: "rgba(139,92,246,0.15)",
+    badgeText: "#C084FC",
+    btnFrom: "#8B5CF6",
+    btnTo: "#A21CAF",
+    route: "/rom-analysis",
+    tag: "New",
+  },
 ];
 
 // ─── AssessmentCard ───────────────────────────────────────────────────────────
@@ -101,7 +156,7 @@ function AssessmentCard({
   isAuthenticated,
   onStart,
 }: {
-  card: typeof CARDS[0];
+  card: (typeof CARDS)[number];
   isAuthenticated: boolean;
   onStart: (route: string) => void;
 }) {
@@ -146,7 +201,7 @@ function AssessmentCard({
           style={{ background: card.bgFrom, transform: "scale(0.8)" }}
         />
         <div className="relative w-full h-full">
-          {card.type === "posture" ? <PostureSVG /> : <GaitSVG />}
+          {card.type === "posture" ? <PostureSVG /> : card.type === "gait" ? <GaitSVG /> : <ROMSVG />}
         </div>
       </div>
 
@@ -223,6 +278,7 @@ export function AIScreeningSection() {
       {/* Glow orbs */}
       <div className="absolute top-1/2 left-1/4 -translate-y-1/2 w-64 h-64 rounded-full blur-[100px] bg-[#2F86C7]/12 pointer-events-none" />
       <div className="absolute top-1/2 right-1/4 -translate-y-1/2 w-64 h-64 rounded-full blur-[100px] bg-[#0D9488]/12 pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 rounded-full blur-[100px] bg-[#8B5CF6]/12 pointer-events-none" />
 
       <div className="relative z-10 container mx-auto px-4 max-w-7xl">
 
@@ -243,7 +299,7 @@ export function AIScreeningSection() {
 
         {/* Cards */}
         <div
-          className="grid grid-cols-2 gap-5 max-w-sm mx-auto sm:max-w-lg md:max-w-xl"
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 max-w-xs mx-auto sm:max-w-lg lg:max-w-4xl"
           style={{ perspective: "1200px" }}
         >
           {CARDS.map((card) => (
@@ -266,7 +322,8 @@ export function AIScreeningSection() {
           <span className="text-lg mt-0.5">💡</span>
           <p className="text-xs text-slate-400 leading-relaxed">
             <span className="font-semibold text-slate-300">Posture Analysis</span> is ideal for neck, back &amp; shoulder conditions.{" "}
-            <span className="font-semibold text-slate-300">Gait Analysis</span> is recommended for balance issues, stroke recovery, post-surgery rehab &amp; lower limb conditions.
+            <span className="font-semibold text-slate-300">Gait Analysis</span> is recommended for balance issues, stroke recovery, post-surgery rehab &amp; lower limb conditions.{" "}
+            <span className="font-semibold text-slate-300">Range of Motion</span> measures how far each joint moves and compares your left side against your right — the one to pick after an injury, a joint replacement or frozen shoulder.
           </p>
         </div>
       </div>

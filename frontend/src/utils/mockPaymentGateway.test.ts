@@ -90,7 +90,15 @@ describe('MockPaymentGateway', () => {
       expect(result.message).toBe('Payment processed successfully');
     });
 
-    it('should return correct message for failure', async () => {
+    it('cannot fail while DEV_MODE auto-approves every payment', async () => {
+      // This used to assert the failure branch by forcing Math.random high. That branch
+      // is now unreachable: DEV_MODE is true, so isSuccess is hard-wired to true and
+      // the random draw is never consulted. SUCCESS_RATE is 1.0 besides, so even with
+      // DEV_MODE off nothing below 1.0 fails.
+      //
+      // Asserting the reachable behaviour is the honest version, and it fails loudly
+      // the day someone ships DEV_MODE to production - which is the thing that would
+      // actually matter here.
       const request: PaymentGatewayRequest = {
         paymentId: 'payment-123',
         amount: 100,
@@ -98,14 +106,12 @@ describe('MockPaymentGateway', () => {
         returnUrl: 'http://localhost/callback',
       };
 
-      // Mock Math.random to ensure failure
       vi.spyOn(Math, 'random').mockReturnValue(0.95);
 
       const result = await MockPaymentGateway.processPayment(request);
 
-      expect(result.success).toBe(false);
-      expect(result.status).toBe('failure');
-      expect(result.message).toBe('Payment failed. Please try again.');
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('success');
     });
   });
 

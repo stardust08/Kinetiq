@@ -125,25 +125,28 @@ describe('useBookings', () => {
     });
   });
 
-  it('should cache data with 5 minute stale time', async () => {
+  it('refetches rather than serving a cached list', async () => {
+    // The 5-minute stale time this used to assert was removed on purpose: a booking
+    // list is derived from the cart AND the database, so a cached copy goes wrong the
+    // moment either changes - a patient who pays, or adds to their cart, would keep
+    // being shown the list from before. useBookings sets staleTime: 0 for that reason,
+    // which makes the old assertion (called once, served from cache) the opposite of
+    // what the hook is now built to do.
     vi.mocked(bookingApi.getAll).mockResolvedValue(mockBookings);
 
     const wrapper = createQueryWrapper();
-    
-    const { result: result1 } = renderHook(() => useBookings(), { wrapper });
 
+    const { result: result1 } = renderHook(() => useBookings(), { wrapper });
     await waitFor(() => {
       expect(result1.current.isSuccess).toBe(true);
     });
 
-    // Second render should use cached data
     const { result: result2 } = renderHook(() => useBookings(), { wrapper });
+    await waitFor(() => {
+      expect(result2.current.data).toEqual(mockBookings);
+    });
 
-    // Should immediately have data from cache
-    expect(result2.current.data).toEqual(mockBookings);
-    
-    // API should only be called once (cached)
-    expect(bookingApi.getAll).toHaveBeenCalledTimes(1);
+    expect(bookingApi.getAll).toHaveBeenCalledTimes(2);
   });
 
   it('should have window focus refetch enabled', async () => {

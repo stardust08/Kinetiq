@@ -10,10 +10,21 @@
  * out in the shape that comparison needs.
  */
 
-import type { PostureAnalysis } from '../types';
 import type { MetricsPayload } from '../types/metrics';
 
-type Assessment = PostureAnalysis & { metricsJson?: MetricsPayload | null };
+/**
+ * The minimum an assessment must carry to be comparable against another.
+ *
+ * Structural rather than tied to PostureAnalysis, because posture, gait and ROM all
+ * feed this and only these three fields are ever read. Naming one modality's type here
+ * forced the other two to cast through `any` at the call site, which is exactly the
+ * place a real shape mismatch would have been silenced.
+ */
+export interface Assessment {
+  id: string;
+  analysisDate: string;
+  metricsJson?: MetricsPayload | null;
+}
 
 /**
  * The most recent assessment strictly BEFORE `current`.

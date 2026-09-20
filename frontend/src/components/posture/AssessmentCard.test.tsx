@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react';
+import { renderWithProviders } from '../../test/renderWithProviders';
 import { describe, it, expect, vi } from 'vitest';
 import AssessmentCard from './AssessmentCard';
 import { PostureAnalysis } from '../../types';
@@ -60,7 +61,7 @@ describe('AssessmentCard', () => {
   const mockOnViewDetails = vi.fn();
 
   it('renders assessment card with correct date', () => {
-    render(
+    renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName="Posture Analysis Package"
@@ -72,7 +73,7 @@ describe('AssessmentCard', () => {
   });
 
   it('displays booking name', () => {
-    render(
+    renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName="Posture Analysis Package"
@@ -84,7 +85,7 @@ describe('AssessmentCard', () => {
   });
 
   it('displays status badge with correct styling', () => {
-    const { rerender } = render(
+    const { rerender } = renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName="Test Service"
@@ -123,7 +124,7 @@ describe('AssessmentCard', () => {
   });
 
   it('displays key metrics with correct values and units', () => {
-    render(
+    renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName="Test Service"
@@ -149,7 +150,7 @@ describe('AssessmentCard', () => {
   });
 
   it('calls onViewDetails when View Details button is clicked', () => {
-    render(
+    renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName="Test Service"
@@ -164,7 +165,7 @@ describe('AssessmentCard', () => {
   });
 
   it('formats time correctly', () => {
-    render(
+    renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName="Test Service"
@@ -186,7 +187,7 @@ describe('AssessmentCard', () => {
       pelvicTiltAngle: 8.111,
     };
 
-    render(
+    renderWithProviders(
       <AssessmentCard
         assessment={assessmentWithDecimals}
         bookingName="Test Service"
@@ -201,7 +202,7 @@ describe('AssessmentCard', () => {
   });
 
   it('applies hover effect classes', () => {
-    const { container } = render(
+    const { container } = renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName="Test Service"
@@ -214,7 +215,7 @@ describe('AssessmentCard', () => {
   });
 
   it('renders with responsive grid layout for metrics', () => {
-    const { container } = render(
+    const { container } = renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName="Test Service"
@@ -227,7 +228,7 @@ describe('AssessmentCard', () => {
   });
 
   it('handles missing booking name gracefully', () => {
-    render(
+    renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName=""
@@ -240,7 +241,7 @@ describe('AssessmentCard', () => {
   });
 
   it('displays correct units for each metric', () => {
-    render(
+    renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName="Test Service"
@@ -258,7 +259,7 @@ describe('AssessmentCard', () => {
   });
 
   it('has accessible button with aria-label', () => {
-    render(
+    renderWithProviders(
       <AssessmentCard
         assessment={mockAssessment}
         bookingName="Test Service"

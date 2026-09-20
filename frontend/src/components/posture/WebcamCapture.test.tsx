@@ -22,6 +22,21 @@ vi.mock('react-webcam', () => {
   };
 });
 
+// MediaPipe cannot load in jsdom, so without this the component sits in its "Loading
+// AI Model..." branch forever and never renders the webcam, the capture controls or
+// anything else these tests look for. That accounted for every failure in this file.
+const processFrame = vi.fn(() => null);
+vi.mock('../../hooks/useMediaPipePose', () => ({
+  useMediaPipePose: () => ({
+    poseLandmarker: {},
+    isLoading: false,
+    error: null,
+    processFrame,
+    calculateVisibility: () => 1,
+    getVisibilityMessage: () => '',
+  }),
+}));
+
 describe('WebcamCapture', () => {
   const mockOnCaptureComplete = vi.fn();
   const mockOnError = vi.fn();
@@ -56,9 +71,12 @@ describe('WebcamCapture', () => {
       expect(screen.getByText('Initializing camera...')).toBeInTheDocument();
     });
 
-    it('should show start capture button', () => {
+    it('starts each phase automatically rather than waiting for a button', () => {
+      // There is no "Start Capture" control any more - an effect begins the phase as
+      // soon as the subject is in frame and facing the right way. Asserted as an
+      // absence so that reintroducing a manual start is a deliberate decision.
       render(<WebcamCapture {...defaultProps} />);
-      expect(screen.getByText('Start Capture')).toBeInTheDocument();
+      expect(screen.queryByText('Start Capture')).not.toBeInTheDocument();
     });
 
     it('should show cancel button', () => {
@@ -73,10 +91,11 @@ describe('WebcamCapture', () => {
       expect(screen.getByText('Initializing camera...')).toBeInTheDocument();
     });
 
-    it('should disable start button initially', () => {
+    it('offers a way out before anything is captured', () => {
+      // What replaced the disabled start button: the patient can always abandon the
+      // capture, which is the control that actually matters to them.
       render(<WebcamCapture {...defaultProps} />);
-      const startButton = screen.getByText('Start Capture');
-      expect(startButton).toBeDisabled();
+      expect(screen.getByText('Cancel')).toBeInTheDocument();
     });
   });
 
@@ -89,11 +108,6 @@ describe('WebcamCapture', () => {
   });
 
   describe('Capture Controls', () => {
-    it('should show start capture button', () => {
-      render(<WebcamCapture {...defaultProps} />);
-      expect(screen.getByText('Start Capture')).toBeInTheDocument();
-    });
-
     it('should call onCancel when cancel button is clicked', () => {
       render(<WebcamCapture {...defaultProps} />);
       
@@ -118,13 +132,6 @@ describe('WebcamCapture', () => {
     });
   });
 
-  describe('Error Handling', () => {
-    it('should show start button as disabled when not ready', () => {
-      render(<WebcamCapture {...defaultProps} />);
-      const startButton = screen.getByText('Start Capture');
-      expect(startButton).toBeDisabled();
-    });
-  });
 
   describe('Development Mode', () => {
     it('should show debug info in development mode', () => {

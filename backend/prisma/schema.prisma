@@ -76,6 +76,7 @@ model User {
   payments               Payment[]
   postureAnalyses        PostureAnalysis[]
   gaitAnalyses           GaitAnalysis[]
+  romAnalyses    ROMAnalysis[]
 }
 
 model Category {
@@ -234,6 +235,7 @@ model Booking {
   @@index([serviceId, time, status])
   @@index([userId, remainingScreeningCount])
   @@index([time])
+  romAnalyses    ROMAnalysis[]
 }
 
 model Report {
@@ -448,4 +450,37 @@ model GaitFrames {
 
   @@index([analysisId])
   @@unique([analysisId, viewType])
+}
+
+/// Range-of-motion screening.
+///
+/// Deliberately has no per-metric columns, unlike PostureAnalysis and GaitAnalysis.
+/// Those were built with one column per metric and the columns went stale the moment a
+/// metric changed meaning or unit - most of them are NULL today because writing a
+/// redefined quantity into a same-named column corrupts every historical comparison
+/// drawn from it. metricsJson carries the whole payload: value, unit, status, normal
+/// range, citation and confidence, per metric. New readers use it; there is no legacy
+/// shape here to be compatible with.
+model ROMAnalysis {
+  id           String   @id @default(uuid())
+  userId       String
+  bookingId    String
+  analysisDate DateTime @default(now())
+
+  /// Full v2 metric payload, one entry per movement captured.
+  metricsJson    Json?
+  /// Capture-quality warnings: assumed aspect ratio, wrong-way stances, unsteady holds.
+  qualityFlags   Json?
+  schemaVersion  Int      @default(2)
+
+  /// Comma-separated movements the patient actually completed.
+  capturedMovements String?
+  totalFrames       Int?
+  status            String  @default("completed")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([userId, analysisDate])
+  @@index([bookingId])
 }

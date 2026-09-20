@@ -106,7 +106,7 @@ describe('BookingSelectionStep', () => {
   describe('Loading State', () => {
     it('should display loading spinner while fetching bookings', () => {
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: [],
+        data: [],
         isLoading: true,
         error: null,
         refetch: vi.fn(),
@@ -125,7 +125,7 @@ describe('BookingSelectionStep', () => {
     it('should display error message when fetch fails', () => {
       const mockRefetch = vi.fn();
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: [],
+        data: [],
         isLoading: false,
         error: new Error('Network error'),
         refetch: mockRefetch,
@@ -144,7 +144,7 @@ describe('BookingSelectionStep', () => {
       const user = userEvent.setup();
       const mockRefetch = vi.fn();
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: [],
+        data: [],
         isLoading: false,
         error: new Error('Network error'),
         refetch: mockRefetch,
@@ -162,7 +162,7 @@ describe('BookingSelectionStep', () => {
 
     it('should handle non-Error error objects', () => {
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: [],
+        data: [],
         isLoading: false,
         error: 'String error' as any,
         refetch: vi.fn(),
@@ -179,7 +179,7 @@ describe('BookingSelectionStep', () => {
   describe('No Bookings State', () => {
     it('should display NoBookingsState when bookings array is empty', () => {
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: [],
+        data: [],
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -194,7 +194,7 @@ describe('BookingSelectionStep', () => {
 
     it('should display NoBookingsState when bookings is undefined', () => {
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: undefined as any,
+        data: undefined as any,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -226,7 +226,7 @@ describe('BookingSelectionStep', () => {
       ];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: bookingsWithNoCounts,
+        data: bookingsWithNoCounts,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -249,7 +249,7 @@ describe('BookingSelectionStep', () => {
       ];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: mockBookings,
+        data: mockBookings,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -267,7 +267,7 @@ describe('BookingSelectionStep', () => {
       const mockBookings = [createMockBooking()];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: mockBookings,
+        data: mockBookings,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -290,7 +290,7 @@ describe('BookingSelectionStep', () => {
       ];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: mockBookings,
+        data: mockBookings,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -319,7 +319,7 @@ describe('BookingSelectionStep', () => {
       ];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: mockBookings,
+        data: mockBookings,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -341,7 +341,7 @@ describe('BookingSelectionStep', () => {
       const mockBookings = [createMockBooking()];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: mockBookings,
+        data: mockBookings,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -362,7 +362,7 @@ describe('BookingSelectionStep', () => {
       ];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: mockBookings,
+        data: mockBookings,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -390,7 +390,7 @@ describe('BookingSelectionStep', () => {
       ];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: mockBookings,
+        data: mockBookings,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -417,7 +417,7 @@ describe('BookingSelectionStep', () => {
       const mockBookings = [createMockBooking()];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: mockBookings,
+        data: mockBookings,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -454,7 +454,7 @@ describe('BookingSelectionStep', () => {
       ];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: mockBookings,
+        data: mockBookings,
         isLoading: false,
         error: null,
         refetch: vi.fn(),
@@ -478,7 +478,7 @@ describe('BookingSelectionStep', () => {
       ];
 
       vi.mocked(useBookingsHook.useBookings).mockReturnValue({
-        bookings: mockBookings,
+        data: mockBookings,
         isLoading: false,
         error: null,
         refetch: vi.fn(),

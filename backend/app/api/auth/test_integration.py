@@ -1,18 +1,30 @@
 """
 Integration tests for authentication endpoints.
 
-This module provides comprehensive integration tests for all authentication
-endpoints, simulating real-world usage scenarios including the complete
-authentication flow from OTP generation to logout.
+These drive the real stack against a REAL DATABASE: they create users, OTP rows and
+tokens, and exercise the full send-otp -> verify-otp -> me -> logout flow.
 
-Tests cover:
-- POST /api/auth/send-otp - OTP generation and sending
-- POST /api/auth/verify-otp - OTP verification and token generation
-- GET /api/auth/me - Authenticated user information retrieval
-- POST /api/auth/logout - User logout
+They are OPT-IN, and that is not caution for its own sake. They were running by default
+against whatever DATABASE_URL pointed at - in practice the shared Neon instance holding
+live accounts - and they create users with HARDCODED phone numbers and never delete
+them. So the first run wrote those users to production, every run after it failed on the
+unique phone constraint, and the failures were read as "the auth tests are broken"
+rather than as "the test suite is writing to production". Thirty of the forty user rows
+in that database were left there by this file.
 
-Each endpoint is tested for both success and failure scenarios.
+To run them, point DATABASE_URL at a disposable database and set:
+
+    RUN_DB_INTEGRATION_TESTS=1 python -m pytest app/api/auth/test_integration.py
+
+The phone numbers are now unique per run and the users are deleted afterwards, so the
+suite is re-runnable - but it still needs a database it is allowed to write to.
+
+Coverage that does NOT need a database lives in test_routes.py (the HTTP contract) and
+test_service.py (the OTP logic); both run by default.
 """
+
+import os
+import uuid
 
 import pytest
 import pytest_asyncio
@@ -22,16 +34,68 @@ from app.main import app
 from app.db.client import db
 from app.core.security import TokenService
 
+pytestmark = pytest.mark.skipif(
+    os.getenv("RUN_DB_INTEGRATION_TESTS") != "1",
+    reason=(
+        "Writes users and OTPs to DATABASE_URL. Set RUN_DB_INTEGRATION_TESTS=1 and "
+        "point DATABASE_URL at a disposable database to run."
+    ),
+)
+
+# Unique per run, so a second run does not collide with the rows the first one left.
+#
+# Digits only, and short enough to pass validation: the schema requires
+# ^\+?[1-9]\d{9,14}$ with max_length 15, so a hex run id produced an 18-character
+# phone with letters in it and every request came back 422.
+RUN_ID = f"{uuid.uuid4().int % 1000:03d}"
+
+# Every phone this run hands out, so cleanup can delete exactly these and nothing else.
+# Matching on "contains RUN_ID" instead would be three digits wide against a table of
+# real accounts - the sort of cleanup that quietly deletes a patient.
+_ISSUED: set = set()
+
+
+def a_phone(slot: str) -> str:
+    """A test phone number that is unique to this run."""
+    phone = f"+1{RUN_ID}{slot[-9:]}"
+    _ISSUED.add(phone)
+    return phone
+
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def _remove_rows_this_run_created():
+    """
+    Delete everything this run created, whatever happened during it.
+
+    Without this the suite is single-use: the users it creates hold the phone numbers
+    the next run needs, and every test that registers one fails on the unique
+    constraint. That is how thirty test users came to be sitting in the production
+    database - each run added more and none removed any.
+    """
+    yield
+    if not db.is_connected():
+        return
+    if not _ISSUED:
+        return
+    try:
+        # Exactly the phones this run issued. Never a pattern match.
+        await db.otp.delete_many(where={"phoneNo": {"in": sorted(_ISSUED)}})
+        await db.user.delete_many(where={"phone": {"in": sorted(_ISSUED)}})
+    except Exception as exc:  # noqa: BLE001 - cleanup must not mask a test failure
+        print(f"[WARNING] could not clean up rows for run {RUN_ID}: {exc}")
+
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
 async def setup_database():
     """Connect to database before tests and disconnect after."""
-    await db.connect()
+    # The project-wide autouse fixture in conftest.py has already connected, and
+    # connecting a second time raises AlreadyConnectedError - which errored every
+    # test in this file at setup. Disconnecting here is wrong for the same reason:
+    # the connection is shared, so tearing it down strands every test that runs
+    # afterwards.
+    if not db.is_connected():
+        await db.connect()
     yield
-    # Clean up test data
-    await db.otp.delete_many(where={"phoneNo": {"startswith": "+1234567"}})
-    await db.user.delete_many(where={"phone": {"startswith": "+1234567"}})
-    await db.disconnect()
 
 
 @pytest_asyncio.fixture
@@ -51,7 +115,7 @@ class TestSendOTPEndpoint:
         response = await client.post(
             "/api/auth/send-otp",
             json={
-                "phone": "+12345678001",
+                "phone": a_phone("2345678001"),
                 "type": "LOGIN"
             }
         )
@@ -62,7 +126,7 @@ class TestSendOTPEndpoint:
         
         # Verify OTP was created in database
         otp_record = await db.otp.find_first(
-            where={"phoneNo": "+12345678001"},
+            where={"phoneNo": a_phone("2345678001")},
             order={"createdAt": "desc"}
         )
         assert otp_record is not None
@@ -77,7 +141,7 @@ class TestSendOTPEndpoint:
         response = await client.post(
             "/api/auth/send-otp",
             json={
-                "phone": "+12345678002",
+                "phone": a_phone("2345678002"),
                 "type": "SIGNUP"
             }
         )
@@ -88,7 +152,7 @@ class TestSendOTPEndpoint:
         
         # Verify OTP type is SIGNUP
         otp_record = await db.otp.find_first(
-            where={"phoneNo": "+12345678002"},
+            where={"phoneNo": a_phone("2345678002")},
             order={"createdAt": "desc"}
         )
         assert otp_record is not None
@@ -97,7 +161,7 @@ class TestSendOTPEndpoint:
     @pytest.mark.asyncio
     async def test_send_otp_rate_limiting(self, client):
         """Test OTP rate limiting prevents multiple requests within 60 seconds."""
-        phone = "+12345678003"
+        phone = a_phone("2345678003")
         
         # First request should succeed
         response1 = await client.post(
@@ -145,7 +209,7 @@ class TestSendOTPEndpoint:
         response = await client.post(
             "/api/auth/send-otp",
             json={
-                "phone": "+12345678004",
+                "phone": a_phone("2345678004"),
                 "type": "INVALID_TYPE"
             }
         )
@@ -159,7 +223,7 @@ class TestVerifyOTPEndpoint:
     @pytest.mark.asyncio
     async def test_verify_otp_success_new_user(self, client):
         """Test successful OTP verification for a new user (signup flow)."""
-        phone = "+12345678010"
+        phone = a_phone("2345678010")
         otp = "123456"
         
         # Create OTP in database
@@ -182,14 +246,29 @@ class TestVerifyOTPEndpoint:
         
         assert response.status_code == 200
         data = response.json()
-        
-        # Verify response structure
-        assert "token" in data
-        assert "user" in data
+
+        # A phone with no account behind it does NOT get a token here. Verifying the
+        # OTP proves the number; it does not create the user. The caller is sent to
+        # complete-profile, and the token is issued there.
+        #
+        # This assertion used to expect a token and a populated user, which is the
+        # contract from before profile completion existed.
+        assert data["requiresProfileCompletion"] is True
+        assert data["token"] is None
+        assert data["user"] is None
+        assert data["phone"] == phone
+
+        # Completing the profile is what creates the account and issues the token.
+        response = await client.post(
+            "/api/auth/complete-profile",
+            json={"phone": phone, "name": "A New Patient",
+                  "email": f"new{RUN_ID}@example.com"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
         assert isinstance(data["token"], str)
         assert len(data["token"]) > 0
-        
-        # Verify user data
+
         user = data["user"]
         assert user["phone"] == phone
         assert user["role"] == "USER"
@@ -211,7 +290,7 @@ class TestVerifyOTPEndpoint:
     @pytest.mark.asyncio
     async def test_verify_otp_success_existing_user(self, client):
         """Test successful OTP verification for an existing user (login flow)."""
-        phone = "+12345678011"
+        phone = a_phone("2345678011")
         otp = "654321"
         
         # Create existing user
@@ -254,7 +333,7 @@ class TestVerifyOTPEndpoint:
         response = await client.post(
             "/api/auth/verify-otp",
             json={
-                "phone": "+12345678012",
+                "phone": a_phone("2345678012"),
                 "otp": "999999"
             }
         )
@@ -266,7 +345,7 @@ class TestVerifyOTPEndpoint:
     @pytest.mark.asyncio
     async def test_verify_otp_expired(self, client):
         """Test OTP verification with expired OTP."""
-        phone = "+12345678013"
+        phone = a_phone("2345678013")
         otp = "111111"
         
         # Create expired OTP (expired 1 minute ago)
@@ -294,7 +373,7 @@ class TestVerifyOTPEndpoint:
     @pytest.mark.asyncio
     async def test_verify_otp_already_used(self, client):
         """Test OTP verification with already used OTP."""
-        phone = "+12345678014"
+        phone = a_phone("2345678014")
         otp = "222222"
         
         # Create used OTP
@@ -324,7 +403,7 @@ class TestVerifyOTPEndpoint:
         response = await client.post(
             "/api/auth/verify-otp",
             json={
-                "phone": "+12345678015",
+                "phone": a_phone("2345678015"),
                 "otp": "abc123"
             }
         )
@@ -334,7 +413,7 @@ class TestVerifyOTPEndpoint:
         response = await client.post(
             "/api/auth/verify-otp",
             json={
-                "phone": "+12345678015",
+                "phone": a_phone("2345678015"),
                 "otp": "123"
             }
         )
@@ -344,7 +423,7 @@ class TestVerifyOTPEndpoint:
         response = await client.post(
             "/api/auth/verify-otp",
             json={
-                "phone": "+12345678015",
+                "phone": a_phone("2345678015"),
                 "otp": "1234567"
             }
         )
@@ -363,7 +442,7 @@ class TestVerifyOTPEndpoint:
         # Missing OTP
         response = await client.post(
             "/api/auth/verify-otp",
-            json={"phone": "+12345678016"}
+            json={"phone": a_phone("2345678016")}
         )
         assert response.status_code == 422
 
@@ -377,7 +456,7 @@ class TestGetMeEndpoint:
         # Create test user
         user = await db.user.create(
             data={
-                "phone": "+12345678020",
+                "phone": a_phone("2345678020"),
                 "role": "USER",
                 "status": "ACTIVE"
             }
@@ -397,7 +476,7 @@ class TestGetMeEndpoint:
         
         # Verify user data
         assert data["id"] == user.id
-        assert data["phone"] == "+12345678020"
+        assert data["phone"] == a_phone("2345678020")
         assert data["role"] == "USER"
         assert data["status"] == "ACTIVE"
     
@@ -442,7 +521,7 @@ class TestGetMeEndpoint:
         # Create user and generate token
         user = await db.user.create(
             data={
-                "phone": "+12345678021",
+                "phone": a_phone("2345678021"),
                 "role": "USER",
                 "status": "ACTIVE"
             }
@@ -466,7 +545,7 @@ class TestGetMeEndpoint:
         # Create inactive user
         user = await db.user.create(
             data={
-                "phone": "+12345678022",
+                "phone": a_phone("2345678022"),
                 "role": "USER",
                 "status": "INACTIVE"
             }
@@ -492,7 +571,7 @@ class TestLogoutEndpoint:
         # Create test user
         user = await db.user.create(
             data={
-                "phone": "+12345678030",
+                "phone": a_phone("2345678030"),
                 "role": "USER",
                 "status": "ACTIVE"
             }
@@ -535,7 +614,7 @@ class TestLogoutEndpoint:
         # Create inactive user
         user = await db.user.create(
             data={
-                "phone": "+12345678031",
+                "phone": a_phone("2345678031"),
                 "role": "USER",
                 "status": "INACTIVE"
             }
@@ -558,7 +637,7 @@ class TestCompleteAuthenticationFlow:
     @pytest.mark.asyncio
     async def test_complete_signup_flow(self, client):
         """Test complete signup flow: send OTP -> verify OTP -> access protected route."""
-        phone = "+12345678040"
+        phone = a_phone("2345678040")
         
         # Step 1: Send OTP
         response = await client.post(
@@ -582,6 +661,18 @@ class TestCompleteAuthenticationFlow:
         )
         assert response.status_code == 200
         data = response.json()
+
+        # A new phone is sent to complete-profile first; that is where the token comes
+        # from. An existing one is signed straight in.
+        if data["requiresProfileCompletion"]:
+            response = await client.post(
+                "/api/auth/complete-profile",
+                json={"phone": phone, "name": "A Patient",
+                      "email": f"flow{RUN_ID}@example.com"},
+            )
+            assert response.status_code == 200, response.text
+            data = response.json()
+
         token = data["token"]
         user_id = data["user"]["id"]
         
@@ -603,7 +694,7 @@ class TestCompleteAuthenticationFlow:
     @pytest.mark.asyncio
     async def test_complete_login_flow(self, client):
         """Test complete login flow for existing user."""
-        phone = "+12345678041"
+        phone = a_phone("2345678041")
         
         # Create existing user
         existing_user = await db.user.create(
@@ -651,7 +742,7 @@ class TestCompleteAuthenticationFlow:
     @pytest.mark.asyncio
     async def test_otp_cannot_be_reused(self, client):
         """Test that OTP cannot be used twice."""
-        phone = "+12345678042"
+        phone = a_phone("2345678042")
         otp = "333333"
         
         # Create OTP
@@ -683,7 +774,7 @@ class TestCompleteAuthenticationFlow:
     @pytest.mark.asyncio
     async def test_token_works_across_multiple_requests(self, client):
         """Test that token can be used for multiple authenticated requests."""
-        phone = "+12345678043"
+        phone = a_phone("2345678043")
         
         # Create user and get token
         user = await db.user.create(

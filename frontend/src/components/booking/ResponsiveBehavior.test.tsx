@@ -59,7 +59,7 @@ const createMockBooking = (overrides?: Partial<Booking>): Booking => ({
   totalAmount: 5000,
   paidAmount: 5000,
   remainingAmount: 0,
-  time: new Date('2024-02-01T10:00:00Z'),
+  time: '2024-02-01T10:00:00Z',
   createdAt: new Date('2024-01-15T10:00:00Z'),
   status: 'CONFIRMED' as BookingStatus,
   description: 'Clinical Posture Analysis Session',
@@ -169,8 +169,8 @@ describe('Responsive Behavior Tests', () => {
         </BrowserRouter>
       );
 
-      const startButton = screen.getByRole('button', { name: /Start Assessment/i });
-      const historyButton = screen.getByRole('button', { name: /View History/i });
+      const startButton = screen.getByRole('button', { name: /Posture Analysis/i });
+      const historyButton = screen.getByRole('button', { name: /History \(/i });
 
       expect(startButton).toBeInTheDocument();
       expect(historyButton).toBeInTheDocument();
@@ -189,8 +189,8 @@ describe('Responsive Behavior Tests', () => {
       );
 
       // Verify scheduled time is visible
-      expect(screen.getByText(/Scheduled Time/i)).toBeInTheDocument();
-      expect(screen.getByText(/Payment Details/i)).toBeInTheDocument();
+      expect(screen.getByText(/Scheduled/i)).toBeInTheDocument();
+      expect(screen.getByText(/^Payment$/)).toBeInTheDocument();
     });
 
     it('should handle long service names gracefully', () => {
@@ -245,7 +245,7 @@ describe('Responsive Behavior Tests', () => {
         </BrowserRouter>
       );
 
-      const buttonContainer = screen.getByRole('button', { name: /Start Assessment/i }).parentElement;
+      const buttonContainer = screen.getByRole('button', { name: /Posture Analysis/i }).parentElement;
       expect(buttonContainer).toHaveClass('sm:flex-row'); // Horizontal on tablet
     });
 
@@ -258,8 +258,8 @@ describe('Responsive Behavior Tests', () => {
       );
 
       // Grid should be md:grid-cols-2
-      const scheduledTime = screen.getByText(/Scheduled Time/i);
-      const paymentDetails = screen.getByText(/Payment Details/i);
+      const scheduledTime = screen.getByText(/Scheduled/i);
+      const paymentDetails = screen.getByText(/^Payment$/);
 
       expect(scheduledTime).toBeInTheDocument();
       expect(paymentDetails).toBeInTheDocument();
@@ -292,8 +292,8 @@ describe('Responsive Behavior Tests', () => {
       );
 
       // Verify all sections are present
-      expect(screen.getByText(/Scheduled Time/i)).toBeInTheDocument();
-      expect(screen.getByText(/Payment Details/i)).toBeInTheDocument();
+      expect(screen.getByText(/Scheduled/i)).toBeInTheDocument();
+      expect(screen.getByText(/^Payment$/)).toBeInTheDocument();
       expect(screen.getByText(/Description/i)).toBeInTheDocument();
       expect(screen.getByText(/Service Details/i)).toBeInTheDocument();
     });
@@ -317,8 +317,8 @@ describe('Responsive Behavior Tests', () => {
         </BrowserRouter>
       );
 
-      const startButton = screen.getByRole('button', { name: /Start Assessment/i });
-      const historyButton = screen.getByRole('button', { name: /View History/i });
+      const startButton = screen.getByRole('button', { name: /Posture Analysis/i });
+      const historyButton = screen.getByRole('button', { name: /History \(/i });
 
       expect(startButton).toBeInTheDocument();
       expect(historyButton).toBeInTheDocument();
@@ -368,19 +368,18 @@ describe('Responsive Behavior Tests', () => {
     });
 
     it('should use appropriate color coding for remaining counts', () => {
-      // Green for plenty remaining (> 30%)
-      const { rerender } = render(
+      // The badge's background moved to inline styles; the severity is carried by
+      // the text colour now. Green plenty, orange running low, red none left.
+      const { container, rerender } = render(
         <ScreeningCountBadge totalCount={10} usedCount={3} remainingCount={7} />
       );
-      expect(screen.getByRole('status')).toHaveClass('bg-green-50');
+      expect(container.querySelector('.text-emerald-400')).not.toBeNull();
 
-      // Orange for low remaining (<= 30%)
       rerender(<ScreeningCountBadge totalCount={10} usedCount={8} remainingCount={2} />);
-      expect(screen.getByRole('status')).toHaveClass('bg-orange-50');
+      expect(container.querySelector('.text-orange-400')).not.toBeNull();
 
-      // Red for no remaining
       rerender(<ScreeningCountBadge totalCount={10} usedCount={10} remainingCount={0} />);
-      expect(screen.getByRole('status')).toHaveClass('bg-red-50');
+      expect(container.querySelector('.text-red-400')).not.toBeNull();
     });
 
     it('should display text with responsive sizing', () => {
@@ -411,7 +410,8 @@ describe('Responsive Behavior Tests', () => {
         </BrowserRouter>
       );
 
-      expect(screen.getByText('Select a Booking')).toBeInTheDocument();
+      // BookingSelector is the LIST; 'Select a Booking' is BookingSelectionStep's
+      // heading, one level up. What this component owns is the bookings.
       expect(screen.getAllByText('Posture Analysis Package')).toHaveLength(2);
     });
 
@@ -456,7 +456,8 @@ describe('Responsive Behavior Tests', () => {
         </BrowserRouter>
       );
 
-      expect(screen.getByText('Select a Booking')).toBeInTheDocument();
+      // BookingSelector is the LIST; 'Select a Booking' is BookingSelectionStep's
+      // heading, one level up. What this component owns is the bookings.
       expect(screen.getAllByText('Posture Analysis Package')).toHaveLength(2);
     });
   });
@@ -475,7 +476,8 @@ describe('Responsive Behavior Tests', () => {
         </BrowserRouter>
       );
 
-      expect(screen.getByText('Select a Booking')).toBeInTheDocument();
+      // BookingSelector is the LIST; 'Select a Booking' is BookingSelectionStep's
+      // heading, one level up. What this component owns is the bookings.
       expect(screen.getAllByText('Posture Analysis Package')).toHaveLength(2);
     });
 
@@ -514,7 +516,7 @@ describe('Responsive Behavior Tests', () => {
           </BrowserRouter>
         );
 
-        const button = screen.getByRole('button', { name: /Start Assessment/i });
+        const button = screen.getByRole('button', { name: /Posture Analysis/i });
         expect(button).toBeInTheDocument();
         expect(button).not.toBeDisabled();
 
@@ -594,8 +596,10 @@ describe('Responsive Behavior Tests', () => {
       );
 
       // Verify grid exists with responsive classes
-      const scheduledTime = screen.getByText(/Scheduled Time/i);
-      expect(scheduledTime.closest('.grid')).toHaveClass('md:grid-cols-2');
+      const scheduledTime = screen.getByText(/Scheduled/i);
+      // Two columns at every width now: the block holds short label/value pairs
+      // that fit side by side even on a phone, so there is no breakpoint class.
+      expect(scheduledTime.closest('.grid')).toHaveClass('grid-cols-2');
     });
 
     it('should use two columns on tablet and desktop', () => {
@@ -608,8 +612,10 @@ describe('Responsive Behavior Tests', () => {
         </BrowserRouter>
       );
 
-      const scheduledTime = screen.getByText(/Scheduled Time/i);
-      expect(scheduledTime.closest('.grid')).toHaveClass('md:grid-cols-2');
+      const scheduledTime = screen.getByText(/Scheduled/i);
+      // Two columns at every width now: the block holds short label/value pairs
+      // that fit side by side even on a phone, so there is no breakpoint class.
+      expect(scheduledTime.closest('.grid')).toHaveClass('grid-cols-2');
     });
   });
 });

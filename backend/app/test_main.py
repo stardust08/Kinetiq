@@ -15,11 +15,22 @@ from unittest.mock import patch, MagicMock, AsyncMock
 # Mock the database connection for tests
 @pytest.fixture(autouse=True)
 def mock_db():
-    """Mock database connection for all tests."""
-    with patch('app.db.client.connect_db') as mock_connect, \
-         patch('app.db.client.disconnect_db') as mock_disconnect:
-        mock_connect.return_value = None
-        mock_disconnect.return_value = None
+    """
+    Stop the app's lifecycle events from touching the real database client.
+
+    Two things were wrong with this and between them it never worked. It patched
+    app.db.client.connect_db, but app/main.py does `from app.db.client import
+    connect_db` at import time - so main holds its own reference and the patch missed
+    it entirely. And the replacements were plain Mocks returning None, which cannot be
+    awaited even once the patch lands.
+
+    So every `with TestClient(app)` in this file ran the REAL startup and shutdown. The
+    startup hit AlreadyConnectedError because conftest.py had already connected, and
+    the shutdown disconnected the shared client out from under every test that ran
+    afterwards.
+    """
+    with patch('app.main.connect_db', new_callable=AsyncMock) as mock_connect, \
+         patch('app.main.disconnect_db', new_callable=AsyncMock) as mock_disconnect:
         yield mock_connect, mock_disconnect
 
 
@@ -153,7 +164,9 @@ def test_posture_routes_registered(app):
     # Verify posture routes are included
     expected_posture_routes = [
         "/api/posture/start-analysis",
-        "/api/posture/process-frame",
+        # /process-frame was removed deliberately: it decoded a base64 JPEG and ran
+        # MediaPipe on the server, and has been unreachable since pose estimation moved
+        # into the browser. The route list was never updated.
         "/api/posture/finalize-analysis",
         "/api/posture/cancel-analysis",
         "/api/posture/my-assessments",
@@ -166,7 +179,9 @@ def test_posture_routes_registered(app):
     
     # Verify posture routes have correct methods
     posture_routes = [route for route in app.routes if "/api/posture" in route.path]
-    assert len(posture_routes) >= 7, f"Expected at least 7 posture routes, found {len(posture_routes)}"
+    # Six, not seven: /process-frame was removed when pose estimation moved into
+    # the browser, and nothing has replaced it.
+    assert len(posture_routes) >= 6, f"Expected at least 6 posture routes, found {len(posture_routes)}"
 
 
 def test_openapi_docs_available(client):

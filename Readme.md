@@ -4,18 +4,19 @@
 
 # 🦴 Neura-AI
 
-### **Clinical posture & gait screening from an ordinary webcam**
+### **Clinical posture, gait & range-of-motion screening from an ordinary webcam**
 
-*A patient stands in front of a laptop, holds four poses, then walks across the frame.*
-*Ninety seconds later a clinician has measured joint angles, spinal alignment and gait timing —*
-*with an honest statement of how much each number can be trusted.*
+*A patient stands in front of a laptop, holds four poses, walks across the frame,*
+*then moves each joint as far as it will go. A few minutes later a clinician has measured*
+*spinal alignment, gait timing and joint range — with an honest statement of how much*
+*each number can be trusted.*
 
 <br/>
 
-![Certified](https://img.shields.io/badge/metrics_certified-26-00C853?style=for-the-badge&labelColor=1a1a2e)
+![Certified](https://img.shields.io/badge/metrics_certified-37-00C853?style=for-the-badge&labelColor=1a1a2e)
 ![Tolerance](https://img.shields.io/badge/within_tolerance-≥96%25-00C853?style=for-the-badge&labelColor=1a1a2e)
 ![Below bar](https://img.shields.io/badge/below_bar-0-00C853?style=for-the-badge&labelColor=1a1a2e)
-![Tests](https://img.shields.io/badge/tests-297_passing-00C853?style=for-the-badge&labelColor=1a1a2e)
+![Tests](https://img.shields.io/badge/tests-1990_passing-00C853?style=for-the-badge&labelColor=1a1a2e)
 
 <br/>
 
@@ -58,7 +59,7 @@ flowchart TB
     A["📷 Webcam"] --> B["🧠 MediaPipe · WebAssembly<br/><i>33 landmarks per frame, on-device</i>"]
     B --> C{"🚦 Capture gate<br/><i>whole body in frame?</i><br/><i>facing the right way?</i>"}
     C -. "not yet — show red, block capture" .-> C
-    C -- "ready" --> D["📦 240 frames · posture<br/>900 frames · gait"]
+    C -- "ready" --> D["📦 240 frames · posture<br/>900 frames · gait<br/>600 frames · range of motion"]
     D == "ONE request · landmark numbers only<br/>no video, no per-frame images" ==> E
     E["📐 Metric registry<br/><i>one definition per metric</i>"] --> F["🧮 Geometry<br/><i>signs measured, never assumed</i>"]
     F --> G{"🛡️ Confidence gates"}
@@ -95,7 +96,7 @@ The backend never sees video. It receives numbers and does geometry on them.
 
 <table>
 <tr>
-<td width="50%" valign="top">
+<td width="33%" valign="top">
 
 ### 🧍 Posture
 
@@ -111,8 +112,10 @@ Trunk lean · shoulder & pelvic obliquity ·
 head tilt · hip & knee angles ·
 frontal knee alignment · leg-length asymmetry
 
+*Where the body rests.*
+
 </td>
-<td width="50%" valign="top">
+<td width="33%" valign="top">
 
 ### 🚶 Gait
 
@@ -128,9 +131,40 @@ Cadence · stride time · stance/swing/double-support ·
 stride length · walking speed ·
 peak knee & hip flexion · trunk lean · step width
 
+*How the body moves through a cycle.*
+
+</td>
+<td width="33%" valign="top">
+
+### 📏 Range of motion
+
+**10 holds** · front, left, right
+3 s end-range hold each
+
+| | |
+|---|---|
+| Reportable | **11** |
+| Carry a normal range | **11** |
+
+Shoulder flexion & abduction · elbow flexion ·
+hip flexion · knee flexion ·
+cervical side bend — **each side measured separately**
+
+*How far a joint will go.*
+
 </td>
 </tr>
 </table>
+
+> [!TIP]
+> **Range of motion reports left and right side by side, and never averages them.**
+> A shoulder reaching 170° on one side and 120° on the other is the finding; two numbers
+> sitting inside their normal range individually is exactly how that finding is missed.
+> The comparison is shown **without a threshold** — what counts as a meaningful
+> side-to-side difference depends on the joint and the patient, and no cited cutoff
+> exists for these measurements.
+>
+> Its normal ranges are **floors, not bands**: falling below is the finding.
 
 > [!NOTE]
 > **A metric's definition lives in exactly one place** — the registry
@@ -173,12 +207,31 @@ numbers we would ship land within each metric's tolerance.**
 ```console
 $ python backend/scripts/certify_accuracy.py --trials 150
 
-  CERTIFIED at >=96%    26 metrics
+  CERTIFIED at >=96%    26 metrics      ← posture + gait
+  BELOW BAR              0
+
+$ python backend/scripts/certify_rom.py --trials 150
+
+  CERTIFIED at >=96%    11 metrics      ← range of motion
   BELOW BAR              0
 ```
 
 A metric that cannot clear the bar **is not shipped**. It is withheld with a reason, or
 stripped of its normal range so it can be read but never used as a verdict.
+
+> [!IMPORTANT]
+> **Certification alone cannot catch a definition that is wrong self-consistently.**
+> Truth is derived from the same geometry the metric reads, so a sign inversion certifies
+> at 100% while telling every clinician the patient bends the other way. Cervical side
+> bend did exactly that, and three further defects hid behind it — a synthetic skeleton
+> whose head translated with the trunk but stayed bolted to the horizon, a reference that
+> **added** a shoulder shrug to the measured range, and a pelvis whose own tilt passed
+> through at 1:1.
+>
+> So each metric is *also* pinned against the **posed** angle — the number a clinician
+> would have typed into a goniometer — in `core/pose/test_rom_v2.py`. Certification
+> proves a metric survives noise and projection. Only a definitional test proves it is
+> measuring the right thing.
 
 </td></tr>
 <tr><td>
@@ -196,9 +249,13 @@ the smallest difference distinguishable from measuring twice.
 ```console
 $ python backend/scripts/repeatability.py --subjects 30 --sessions 4
 
-  TRACKS CHANGE         23
+  TRACKS CHANGE         34
   SINGLE READING ONLY    4   ← never allowed to drive a progress claim
 ```
+
+This matters most for range of motion, because *"how much further does the shoulder go
+than last visit"* **is** the ROM result. All 11 ROM metrics track change, with a minimal
+detectable change under **1.3°**.
 
 </td></tr>
 </table>
@@ -332,20 +389,48 @@ uvicorn app.main:app --reload      # → http://localhost:8000
 ## 🧪 Running the tests
 
 ```bash
-cd backend && python -m pytest app/core app/api -q      # 297 tests
+cd backend  && python -m pytest app -q         # 818 tests, NO database required
 cd frontend && npm test
 ```
+
+The backend suite needs **no database**. Every test either fakes it or does not touch
+it, which is what lets CI gate on all 818.
+
+Two suites genuinely need one and are opt-in, because they assert against seeded data
+rather than against the code:
+
+```bash
+RUN_DB_INTEGRATION_TESTS=1 python -m pytest app -q   # 859 tests, needs a database
+```
+
+> [!CAUTION]
+> Point `DATABASE_URL` at a **disposable** database before running those. They were
+> previously not opt-in, and they create users with hardcoded phone numbers and never
+> deleted them — so they ran against production, wrote rows there, and then failed on
+> the unique phone constraint for every run afterwards. Thirty of the forty user rows
+> in that database were left behind by the test suite. The phone numbers are now unique
+> per run and every row is deleted afterwards, by exact match rather than by pattern.
 
 | Suite | What it guards |
 |---|---|
 | 🎯 `core/validation/test_harness.py` | every metric against known ground truth |
 | 🧨 `core/validation/test_edge_cases.py` | degenerate captures — *"should there be a number at all?"* |
+| 📏 `core/pose/test_rom_v2.py` | joint angles against the **posed** angle — sign, reference frame, and what must *not* leak in |
+| 🔐 `api/posture/test_service.py` | authorisation, screening credits, and that a credit is spent **atomically** |
 | 🔐 `api/gait/test_service.py` | authorisation, screening credits, capture-rate handling |
+| 🔐 `api/rom/test_service.py` | the same, plus **which metrics a given hold is allowed to report**, and the payload contract |
+| 🌐 `api/rom/test_routes.py` | request validation, auth on every endpoint, the `{data: …}` envelope the client unwraps |
 | 🚦 `frontend/src/lib/captureOrientation.test.ts` | the browser-side stance gate |
+| 🧭 `frontend/src/lib/romMovements.test.ts` | the capture script — sides named, views that can see them |
+| 🔗 `frontend/src/app/Router.navigation.test.tsx` | every screening card reaches a real, protected route |
+| 📐 `frontend/src/components/rom/ROMMetricsDisplay.test.tsx` | the left/right comparison, and that it carries **no** threshold |
+| 💳 `frontend/src/pages/ROMAnalysisPage.test.tsx` | one screening credit per assessment, however the capture behaves |
 
 Edge cases are covered adversarially: empty captures, a frozen subject, a treadmill walk
 with no translation, `NaN` landmarks, tracking dropouts, portrait phones, mislabelled
-views, and a subject who faced the wrong way. Every one asserts the same invariant —
+views, landmarks collapsed to a point, holds too short to be steady, joints posed from
+full range down to severely restricted, and a subject who faced the wrong way. Every one
+asserts the same invariant —
 
 > **a metric is never shipped *and* wrong.**
 
@@ -356,10 +441,10 @@ views, and a subject who faced the wrong way. Every one asserts the same invaria
 ```
 backend/
 ├── app/
-│   ├── api/              FastAPI routes & services — auth, bookings, posture, gait, payments
+│   ├── api/              FastAPI routes & services — auth, bookings, posture, gait, ROM, payments
 │   └── core/
 │       ├── metrics/      🧭 the registry — one definition per metric, tolerances, MDC
-│       ├── pose/         🧍 posture calibrator
+│       ├── pose/         🧍 posture calibrator · 📏 range-of-motion calibrator
 │       ├── gait/         🚶 gait analyser & event detection
 │       ├── geometry/     📐 shared primitives with documented sign conventions
 │       └── validation/   🔬 synthetic skeleton, camera model, walk generator, harness
@@ -368,8 +453,8 @@ backend/
 
 frontend/
 └── src/
-    ├── components/       capture flows, metric report, PDF templates
-    ├── lib/              MediaPipe integration, capture session, orientation gate
+    ├── components/       capture flows (posture · gait · ROM), metric report, PDF templates
+    ├── lib/              MediaPipe integration, capture session, orientation gate, movement script
     └── types/            metric payload contract shared with the backend
 ```
 
@@ -409,3 +494,22 @@ to support a progress claim, and they are marked so the UI will not make one.
 frame and its range of motion cannot be recovered. The capture requests 60 and sends the
 rate it *actually achieved*, which the backend re-derives from frame timestamps rather
 than trusting.
+
+**🟡 Range of motion measures a held position, not a movement.** The patient moves the
+joint as far as it goes and holds while frames are collected, which is why ROM reuses the
+posture capture path unchanged — the visibility gate, the orientation gate, the frame
+budget and the confidence gates all apply as-is. What it therefore does **not** measure
+is anything about the *path*: velocity, smoothness, or the point along the arc where pain
+begins.
+
+**🟡 ROM is active range, unassisted, standing.** Published reference values are usually
+taken supine or with an examiner stabilising the joint. Standing hip flexion in particular
+is limited by balance rather than by the joint, so its floor is set lower than the
+textbook figure and the metric is more useful for **symmetry** than for absolute range.
+
+**🟡 Cervical rotation cannot be measured** and is declared unsupported rather than
+estimated. It is a transverse-plane movement: rotation about the vertical axis moves a
+landmark toward or away from the lens instead of across it, so the measurement would rest
+entirely on MediaPipe's inferred depth. The posture registry's `head_rotation` is the same
+quantity and certifies at **25.5° of error** against a ±8° normal range. The arithmetic is
+implemented and exact on clean landmarks; what is missing is a second calibrated view.

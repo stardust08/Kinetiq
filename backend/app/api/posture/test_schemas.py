@@ -222,16 +222,28 @@ class TestResponseSchemas:
         assert metrics.leftLegLength == 920.0
         assert metrics.rightLegLength == 918.0
     
-    def test_posture_metrics_missing_field(self):
-        """Test PostureMetrics with missing required field."""
-        data = {
-            "fhdPixels": 45.2,
-            # Missing all other required fields
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            PostureMetrics(**data)
-        # Should have errors for missing fields
-        assert len(exc_info.value.errors()) > 0
+    def test_posture_metrics_absent_fields_are_none_not_zero(self):
+        """
+        A partial metric set is VALID, and the absent metrics are None.
+
+        This assertion used to be its opposite - that a missing field raises. Every
+        field on PostureMetrics was made Optional on purpose: a metric that could not be
+        measured, because the capture view was missing or too few frames were usable, is
+        reported as null. Coercing it to 0.0 would make an unmeasurable metric
+        indistinguishable from a genuine zero, and 0.0 is a plausible-looking reading
+        for most of these - a clinician has no way to tell the two apart.
+
+        So the requirement is now the reverse of what was written here, and the thing
+        worth guarding is that the absent values come back as None.
+        """
+        metrics = PostureMetrics(fhdPixels=45.2)
+
+        assert metrics.fhdPixels == 45.2
+        for field in ("cervicalAngle", "trunkAngle", "pelvicObliquity", "leftKneeAngle"):
+            assert getattr(metrics, field) is None, (
+                f"{field} was not supplied and came back as "
+                f"{getattr(metrics, field)!r} rather than None"
+            )
     
     def test_posture_analysis_response_valid(self):
         """Test valid PostureAnalysisResponse."""

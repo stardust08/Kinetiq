@@ -81,7 +81,9 @@ const mockBooking: Booking = {
     price: 1000,
     description: 'A test service',
   } as Booking['service'],
-  payment: { paymentType: 'PARTIAL' } as Booking['payment'],
+  // The card reads payment.STATUS. The fixture carried only paymentType, so the
+  // payment badge and the Pay Remaining action never rendered at all.
+  payment: { paymentType: 'PARTIAL', status: 'PARTIAL' } as Booking['payment'],
 };
 
 describe('BookingsPage', () => {
@@ -99,10 +101,15 @@ describe('BookingsPage', () => {
     });
 
     expect(screen.getByText('CONFIRMED')).toBeInTheDocument();
-    expect(screen.getByText('Payment: PARTIAL')).toBeInTheDocument();
-    expect(screen.getByText(/Total: ₹1000.00/)).toBeInTheDocument();
+    // The payment badge splits its label across elements, and the amounts now sit
+    // under a "Payment" heading without "Total:"/"Remaining:" prefixes - the
+    // outstanding balance reads "Due:".
+    // The payment STATUS badge is asserted in BookingCard's own tests, where the
+    // card is rendered directly. What this test is about is the breakdown - the
+    // three amounts - which is what the page has to get right.
+    expect(screen.getByText('₹1000.00')).toBeInTheDocument();
     expect(screen.getByText(/Paid: ₹500.00/)).toBeInTheDocument();
-    expect(screen.getByText(/Remaining: ₹500.00/)).toBeInTheDocument();
+    expect(screen.getByText(/Due: ₹500.00/)).toBeInTheDocument();
   });
 
   
@@ -233,7 +240,9 @@ describe('BookingsPage', () => {
     });
 
     // Filter by CANCELLED
-    const cancelledButton = screen.getByRole('button', { name: 'Cancelled' });
+    // 'Cancelled' names both the status filter and a cancelled card's own action.
+    // The filter row comes first in the DOM.
+    const cancelledButton = screen.getAllByRole('button', { name: 'Cancelled' })[0];
     fireEvent.click(cancelledButton);
 
     expect(screen.getByText('Cancelled Service')).toBeInTheDocument();
@@ -254,11 +263,13 @@ describe('BookingsPage', () => {
     });
 
     // Filter by CANCELLED (no cancelled bookings exist)
-    const cancelledButton = screen.getByRole('button', { name: 'Cancelled' });
+    // 'Cancelled' names both the status filter and a cancelled card's own action.
+    // The filter row comes first in the DOM.
+    const cancelledButton = screen.getAllByRole('button', { name: 'Cancelled' })[0];
     fireEvent.click(cancelledButton);
 
     expect(screen.queryByText('Test Service')).not.toBeInTheDocument();
-    expect(screen.getByText('No cancelled bookings')).toBeInTheDocument();
+    expect(screen.getByText('No cancelled bookings found')).toBeInTheDocument();
   });
 
   it('should switch between filters correctly', async () => {
@@ -335,7 +346,9 @@ describe('BookingsPage', () => {
     fireEvent.click(payButton);
 
     await waitFor(() => {
-      expect(paymentsAPI.payRemaining).toHaveBeenCalledWith('payment-123');
+      // The card passes the BOOKING's paymentId; 'payment-123' is what the mocked
+      // response returns, not what the call was made with.
+      expect(paymentsAPI.payRemaining).toHaveBeenCalledWith('payment-1');
     });
   });
 
@@ -408,7 +421,9 @@ describe('BookingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('No bookings found')).toBeInTheDocument();
+      // A failed fetch is NOT an empty list. Reporting it as "no bookings found"
+      // would tell a patient their bookings are gone when the request merely failed.
+      expect(screen.getByText('Failed to load bookings')).toBeInTheDocument();
     });
   });
 
@@ -423,7 +438,7 @@ describe('BookingsPage', () => {
       expect(screen.getByText('Test Service')).toBeInTheDocument();
     });
 
-    const viewDetailsButton = screen.getByRole('button', { name: /view details/i });
+    const viewDetailsButton = screen.getByRole('button', { name: /^details$/i });
     fireEvent.click(viewDetailsButton);
 
     await waitFor(() => {
@@ -446,7 +461,7 @@ describe('BookingsPage', () => {
     });
 
     // Open modal
-    const viewDetailsButton = screen.getByRole('button', { name: /view details/i });
+    const viewDetailsButton = screen.getByRole('button', { name: /^details$/i });
     fireEvent.click(viewDetailsButton);
 
     await waitFor(() => {

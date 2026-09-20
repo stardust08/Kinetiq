@@ -135,15 +135,16 @@ describe('NoCountsState', () => {
     const card = container.querySelector('.py-12.text-center');
     expect(card).toBeInTheDocument();
     
-    // Check for summary box
-    const summaryBox = container.querySelector('.bg-gray-50.border.border-gray-200.rounded-lg');
+    // The summary box's background and border moved to inline styles, so only the
+    // layout classes remain queryable.
+    const summaryBox = container.querySelector('.rounded-lg.p-4');
     expect(summaryBox).toBeInTheDocument();
   });
 
   it('displays remaining count in red', () => {
     const { container } = renderComponent(mockBookings);
     
-    const remainingText = container.querySelector('.text-red-600');
+    const remainingText = container.querySelector('.text-red-400');
     expect(remainingText).toBeInTheDocument();
     expect(remainingText?.textContent).toBe('0');
   });

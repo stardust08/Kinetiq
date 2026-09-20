@@ -182,7 +182,21 @@ def build_skeleton(pose: Pose) -> Dict[int, np.ndarray]:
     head_up = _rot_z(pose.head_tilt) @ trunk_dir
     neck_to_ear = p["ear_height"] - p["shoulder_height"]
     ear_center = mid_shoulder + neck_to_ear * head_up
-    ear_bar = _rot_y(-pose.head_rotation) @ _rot_z(pose.head_tilt) @ np.array([1.0, 0.0, 0.0])
+    # The ear bar is carried by the head, and the head is carried by the TRUNK, so
+    # lateral trunk lean rotates it exactly as it rotates the shoulder bar above.
+    #
+    # It previously took head_tilt alone. That built a subject whose head translated
+    # with the trunk but stayed bolted to the horizon, which no body does, and it broke
+    # the one thing cervical lateral flexion has to get right: a subject leaning 12
+    # degrees with a neutral neck presented a level ear bar over a tilted shoulder bar,
+    # so the metric's whole reason for subtracting a reference could not be exercised.
+    # The certification scored it 100% anyway, because truth came from the same
+    # impossible skeleton.
+    ear_bar = (
+        _rot_y(-pose.head_rotation)
+        @ _rot_z(pose.trunk_lean_lateral + pose.head_tilt)
+        @ np.array([1.0, 0.0, 0.0])
+    )
     lm[L_EAR] = ear_center + p["ear_half_width"] * ear_bar
     lm[R_EAR] = ear_center - p["ear_half_width"] * ear_bar
     nose_dir = _rot_y(-pose.head_rotation) @ np.array([0.0, 0.0, 1.0])

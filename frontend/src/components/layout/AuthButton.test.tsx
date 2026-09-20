@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { renderWithProviders } from '../../test/renderWithProviders';
 import userEvent from '@testing-library/user-event';
 import { AuthButton } from './AuthButton';
 import { useAuthStore } from '../../store/authStore';
@@ -32,13 +33,13 @@ describe('AuthButton', () => {
 
   describe('When logged out', () => {
     it('should show login button', () => {
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
       expect(screen.getByRole('button', { name: /login/i })).toBeInTheDocument();
     });
 
     it('should open login modal when login button is clicked', async () => {
       const user = userEvent.setup();
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
       
       const loginButton = screen.getByRole('button', { name: /login/i });
       await user.click(loginButton);
@@ -50,6 +51,16 @@ describe('AuthButton', () => {
     });
   });
 
+
+  /**
+   * The signed-in menu trigger.
+   *
+   * It renders an avatar icon and no text at all - the user's name and phone used to
+   * sit beside it and were removed - so it has no accessible name to query by. It is
+   * the only button on screen when signed in, which is what makes this safe.
+   */
+  const menuTrigger = () => screen.getByRole('button');
+
   describe('When logged in', () => {
     beforeEach(() => {
       useAuthStore.setState({
@@ -59,29 +70,28 @@ describe('AuthButton', () => {
       });
     });
 
-    it('should show user menu button with user name', () => {
-      render(<AuthButton />);
-      expect(screen.getByRole('button', { name: /test user/i })).toBeInTheDocument();
+    it('shows an avatar trigger rather than the login button', () => {
+      renderWithProviders(<AuthButton />);
+      expect(menuTrigger()).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /login/i })).not.toBeInTheDocument();
     });
 
-    it('should show user phone if name is not available', () => {
-      const userWithoutName = { ...mockUser, name: undefined };
-      useAuthStore.setState({
-        user: userWithoutName,
-        token: 'test-token',
-        isAuthenticated: true,
-      });
-
-      render(<AuthButton />);
-      expect(screen.getByRole('button', { name: /\+1234567890/i })).toBeInTheDocument();
+    it('does not put the user name or phone in the header', () => {
+      // Deliberate: the header shows an avatar only. These assertions used to require
+      // the opposite, and are inverted rather than deleted so that putting a phone
+      // number back into the global header is a decision someone has to make on
+      // purpose.
+      renderWithProviders(<AuthButton />);
+      expect(screen.queryByText('Test User')).not.toBeInTheDocument();
+      expect(screen.queryByText('+1234567890')).not.toBeInTheDocument();
     });
 
     it('should open dropdown menu when clicked', async () => {
       const user = userEvent.setup();
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
       
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = menuTrigger();
+      await user.hover(menuButton);
       
       await waitFor(() => {
         expect(screen.getByText('My Account')).toBeInTheDocument();
@@ -91,14 +101,15 @@ describe('AuthButton', () => {
 
     it('should display user info in dropdown menu', async () => {
       const user = userEvent.setup();
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
       
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = menuTrigger();
+      await user.hover(menuButton);
       
       await waitFor(() => {
-        expect(screen.getAllByText('Test User').length).toBeGreaterThan(0);
-        expect(screen.getByText('+1234567890')).toBeInTheDocument();
+        // The menu lists actions, not identity - the name and phone were removed.
+        expect(screen.getByText('My Account')).toBeInTheDocument();
+        expect(screen.getByText('Notifications')).toBeInTheDocument();
       });
     });
 
@@ -106,15 +117,15 @@ describe('AuthButton', () => {
       const user = userEvent.setup();
       vi.mocked(authApi.logout).mockResolvedValue({ message: 'Logged out' });
       
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
       
       // Open menu
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = menuTrigger();
+      await user.hover(menuButton);
       
       // Click logout
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
       
       await waitFor(() => {
         expect(authApi.logout).toHaveBeenCalled();
@@ -125,15 +136,15 @@ describe('AuthButton', () => {
       const user = userEvent.setup();
       vi.mocked(authApi.logout).mockResolvedValue({ message: 'Logged out' });
       
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
       
       // Open menu
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = menuTrigger();
+      await user.hover(menuButton);
       
       // Click logout
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
       
       await waitFor(() => {
         const state = useAuthStore.getState();
@@ -146,18 +157,17 @@ describe('AuthButton', () => {
     it('should clear auth state even if logout API fails', async () => {
       const user = userEvent.setup();
       
-      // Mock logout to reject - the error will be caught by useAuth's try/finally
       vi.mocked(authApi.logout).mockRejectedValue(new Error('Network error'));
       
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
       
       // Open menu
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = menuTrigger();
+      await user.hover(menuButton);
       
       // Click logout
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
       
       // State should still be cleared even though API failed
       await waitFor(() => {
@@ -177,15 +187,15 @@ describe('AuthButton', () => {
       // Set token in localStorage
       localStorage.setItem('auth_token', 'test-token');
       
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
       
       // Open menu
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = menuTrigger();
+      await user.hover(menuButton);
       
       // Click logout
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
       
       // Token should be removed from localStorage
       await waitFor(() => {

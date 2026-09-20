@@ -5,8 +5,8 @@ import { Booking } from '../../types';
 
 // Mock the UI components
 vi.mock('../../app/components/ui/card', () => ({
-  Card: ({ children, className, onClick }: any) => (
-    <div className={className} onClick={onClick} data-testid="card">
+  Card: ({ children, className, onClick, style }: any) => (
+    <div className={className} onClick={onClick} style={style} data-testid="card">
       {children}
     </div>
   ),
@@ -203,8 +203,13 @@ describe('BookingSelector', () => {
     const selectedTexts = screen.getAllByText('Selected');
     expect(selectedTexts.length).toBeGreaterThan(0);
     
+    // Selection is shown with an inline border and background rather than a ring
+    // utility, so className carries none of it. The "Selected" label above is what a
+    // patient actually sees, and it is asserted already.
     const cards = screen.getAllByTestId('card');
-    expect(cards[0].className).toContain('ring-2 ring-primary');
+    // The selected card gets a 2px brand border inline; the unselected ones get 1px.
+    expect(cards[0].getAttribute('style')).toContain('2px solid');
+    expect(cards[1].getAttribute('style')).toContain('1px solid');
   });
 
   it('shows "No Available Screening Assessments" when no valid bookings', () => {

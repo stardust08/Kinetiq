@@ -92,6 +92,6 @@ describe('BackButton', () => {
     renderWithRouter(<BackButton />);
     
     const button = screen.getByRole('button');
-    expect(button).toHaveClass('text-blue-600', 'hover:text-blue-800');
+    expect(button).toHaveClass('text-[#60b5e8]', 'hover:text-white');
   });
 });

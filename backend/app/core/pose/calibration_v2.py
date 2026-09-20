@@ -171,6 +171,61 @@ class PostureResult:
         }
 
 
+def detect_view_from_samples(samples: List[Dict]) -> Optional[str]:
+    """
+    Which capture a set of samples actually shows, independent of what it was labelled.
+
+    A patient asked to show their left side will sometimes show their right. The metrics
+    themselves no longer care - every sign is measured from the anatomy now rather than
+    looked up from the label - but the operator does, because a session of two
+    right-side captures has no second opinion in it and no left-side data at all.
+
+    Side views are told apart by the anterior direction: the camera sees the subject's
+    right side exactly when anterior projects toward increasing image x. Front and back
+    are told apart by which side of the frame the subject's left shoulder falls on. Both
+    are exact geometric facts about the landmarks, not thresholds.
+
+    Module-level rather than a method because the posture and range-of-motion
+    calibrators both need it and must not disagree. ROM turns the patient between every
+    movement, so it has more chances to end up facing the wrong way than any other
+    capture - and a second, subtly different copy of this rule is how the two would come
+    to give different answers about the same frames.
+
+    Each sample is expected in the calibrators' internal shape: {"pose": {idx: [...]}}.
+    """
+    if not samples:
+        return None
+    votes: Dict[str, int] = {}
+    for sample in samples:
+        lm = sample.get("pose") or {}
+        if not lm:
+            continue
+        l_sh, r_sh = _get(lm, L_SH), _get(lm, R_SH)
+        l_hip, r_hip = _get(lm, L_HIP), _get(lm, R_HIP)
+        if None in (l_sh, r_sh, l_hip, r_hip):
+            continue
+        shoulder_span = abs(float(l_sh[0]) - float(r_sh[0]))
+        hip_span = abs(float(l_hip[0]) - float(r_hip[0]))
+        torso = abs(float(l_sh[1]) - float(l_hip[1])) or 1.0
+        # Face-on, the shoulders are far apart across the frame; side-on they collapse
+        # onto each other. A quarter of torso height separates the two cases with room
+        # to spare.
+        if max(shoulder_span, hip_span) < 0.25 * torso:
+            anterior = _anterior_sign(lm)
+            if anterior is None:
+                continue
+            key = "rightside" if anterior > 0 else "leftside"
+        else:
+            lateral = _lateral_sign(lm)
+            if lateral is None:
+                continue
+            key = "front" if lateral > 0 else "back"
+        votes[key] = votes.get(key, 0) + 1
+    if not votes:
+        return None
+    return max(votes, key=votes.get)
+
+
 class PostureCalibrator:
     """
     Collects pose samples per view and computes clinical posture metrics.
@@ -239,56 +294,8 @@ class PostureCalibrator:
         return True
 
     def observed_view(self, view: str) -> Optional[str]:
-        """
-        Which capture the landmarks actually show, independent of what it was labelled.
-
-        A patient asked to show their left side will sometimes show their right. The
-        metrics themselves no longer care - every sign is measured from the anatomy now
-        rather than looked up from the label - but the operator does, because a session
-        of two right-side captures has no second opinion in it and no left-side data at
-        all.
-
-        Side views are told apart by the anterior direction: the camera sees the
-        subject's right side exactly when anterior projects toward increasing image x.
-        Front and back are told apart by which side of the frame the subject's left
-        shoulder falls on. Both are exact geometric facts about the landmarks, not
-        thresholds.
-        """
-        samples = self.samples_by_view.get(view) or []
-        if not samples:
-            return None
-        votes: Dict[str, int] = {}
-        for sample in samples:
-            lm = sample.get("pose") or {}
-            if not lm:
-                continue
-            l_sh, r_sh = _get(lm, L_SH), _get(lm, R_SH)
-            l_hip, r_hip = _get(lm, L_HIP), _get(lm, R_HIP)
-            if None in (l_sh, r_sh, l_hip, r_hip):
-                continue
-            shoulder_span = abs(float(l_sh[0]) - float(r_sh[0]))
-            hip_span = abs(float(l_hip[0]) - float(r_hip[0]))
-            torso = abs(float(l_sh[1]) - float(l_hip[1])) or 1.0
-            # Face-on, the shoulders are far apart across the frame; side-on they
-            # collapse onto each other. A quarter of torso height separates the two
-            # cases with room to spare.
-            if max(shoulder_span, hip_span) < 0.25 * torso:
-                anterior = _anterior_sign(lm)
-                if anterior is None:
-                    continue
-                votes["rightside" if anterior > 0 else "leftside"] = (
-                    votes.get("rightside" if anterior > 0 else "leftside", 0) + 1
-                )
-            else:
-                lateral = _lateral_sign(lm)
-                if lateral is None:
-                    continue
-                votes["front" if lateral > 0 else "back"] = (
-                    votes.get("front" if lateral > 0 else "back", 0) + 1
-                )
-        if not votes:
-            return None
-        return max(votes, key=votes.get)
+        """Which capture the landmarks under `view` actually show."""
+        return detect_view_from_samples(self.samples_by_view.get(view) or [])
 
     def orientation_warnings(self) -> List[str]:
         """Captures whose landmarks disagree with the view they were filed under."""

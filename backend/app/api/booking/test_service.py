@@ -14,10 +14,44 @@ from app.api.booking.service import BookingService
 from app.core.exceptions import BadRequestException
 
 
+class _FakeTable:
+    """One Prisma model, with every query method awaitable out of the box."""
+
+    def __init__(self):
+        self.find_first = AsyncMock(return_value=None)
+        self.find_unique = AsyncMock(return_value=None)
+        self.find_many = AsyncMock(return_value=[])
+        self.create = AsyncMock(return_value=MagicMock(id="rec_1"))
+        self.update = AsyncMock(return_value=MagicMock(id="rec_1"))
+        self.delete = AsyncMock(return_value=MagicMock(id="rec_1"))
+        self.count = AsyncMock(return_value=0)
+
+
+class _FakeDB:
+    """
+    The Prisma client as the booking service uses it.
+
+    This was a bare MagicMock, so every method a test did not explicitly stub returned
+    a MagicMock and awaiting one raised. That is fine until the service grows a call -
+    which it did, reading the cart inside get_user_bookings_with_screening_counts - and
+    then tests that had nothing to do with carts started failing on an await.
+    """
+
+    def __init__(self):
+        self.booking = _FakeTable()
+        self.cart = _FakeTable()
+        self.payment = _FakeTable()
+        self.service = _FakeTable()
+        self.postureanalysis = _FakeTable()
+        self.user = _FakeTable()
+        self.slotlock = _FakeTable()
+        self.tx = MagicMock()
+
+
 @pytest.fixture
 def mock_db(monkeypatch):
     """Mock database client."""
-    mock = MagicMock()
+    mock = _FakeDB()
     monkeypatch.setattr("app.api.booking.service.db", mock)
     return mock
 
@@ -1291,10 +1325,7 @@ class TestGetUserBookingsWithScreeningCounts:
             where={"userId": "user-1"},
             include={
                 "service": True,
-                "payment": True,
-                "postureAnalyses": {
-                    "select": {"id": True, "analysisDate": True, "status": True}
-                }
+                "payment": True
             },
             order={"createdAt": "desc"}
         )
@@ -1443,14 +1474,10 @@ class TestGetBookingScreeningInfo:
             where={"id": "booking-1", "userId": "user-1"},
             include={
                 "service": True,
-                "postureAnalyses": {
-                    "select": {
-                        "id": True,
-                        "analysisDate": True,
-                        "status": True
-                    },
-                    "order": {"analysisDate": "desc"}
-                }
+                # Prisma Python 0.15.0 cannot nest `select` inside `include`, so the
+                # service fetches the whole relation and narrows it in Python. These
+                # assertions still expected the projection the library refused.
+                "postureAnalyses": True
             }
         )
     
@@ -1472,14 +1499,10 @@ class TestGetBookingScreeningInfo:
             where={"id": "booking-1", "userId": "wrong-user"},
             include={
                 "service": True,
-                "postureAnalyses": {
-                    "select": {
-                        "id": True,
-                        "analysisDate": True,
-                        "status": True
-                    },
-                    "order": {"analysisDate": "desc"}
-                }
+                # Prisma Python 0.15.0 cannot nest `select` inside `include`, so the
+                # service fetches the whole relation and narrows it in Python. These
+                # assertions still expected the projection the library refused.
+                "postureAnalyses": True
             }
         )
     
@@ -1514,7 +1537,16 @@ class TestGetBookingScreeningInfo:
         booking.remainingScreeningCount = 0
         booking.status = "COMPLETED"
         booking.service = MagicMock(name="Starter Plan")
-        booking.postureAnalyses = [MagicMock(id=f"analysis-{i}") for i in range(3)]
+        # Real dates: the service sorts these newest-first, and MagicMock has no
+        # ordering, so a bare MagicMock date raises inside sorted().
+        booking.postureAnalyses = [
+            MagicMock(
+                id=f"analysis-{i}",
+                analysisDate=datetime(2026, 1, i + 1),
+                status="completed",
+            )
+            for i in range(3)
+        ]
         
         mock_db.booking.find_first = AsyncMock(return_value=booking)
         

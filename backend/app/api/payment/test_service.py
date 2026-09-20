@@ -13,10 +13,47 @@ from app.api.payment.service import PaymentService
 from app.core.exceptions import NotFoundException
 
 
+class _FakeTable:
+    """One Prisma model, with every query method awaitable out of the box."""
+
+    def __init__(self):
+        self.find_first = AsyncMock(return_value=None)
+        self.find_unique = AsyncMock(return_value=None)
+        self.find_many = AsyncMock(return_value=[])
+        self.create = AsyncMock(return_value=MagicMock(id="rec_1"))
+        self.update = AsyncMock(return_value=MagicMock(id="rec_1"))
+        self.delete = AsyncMock(return_value=MagicMock(id="rec_1"))
+        self.count = AsyncMock(return_value=0)
+
+
+class _FakeDB:
+    """
+    The Prisma client as the payment service uses it.
+
+    Previously a bare MagicMock, so any method a test did not stub returned a MagicMock
+    and awaiting it raised. Verifying a payment now clears the user's cart, and that
+    one added call broke four tests that have nothing to do with carts.
+    """
+
+    def __init__(self):
+        self.payment = _FakeTable()
+        self.cart = _FakeTable()
+        # Verifying a payment clears the user's cart, but only if one exists. A cart is
+        # supplied by default so the clear is exercised; a test wanting the no-cart
+        # branch sets find_first back to None.
+        self.cart.find_first = AsyncMock(
+            return_value=MagicMock(id="cart-1", userId="user-1")
+        )
+        self.booking = _FakeTable()
+        self.user = _FakeTable()
+        self.service = _FakeTable()
+        self.tx = MagicMock()
+
+
 @pytest.fixture
 def mock_db(monkeypatch):
     """Mock database client."""
-    mock = MagicMock()
+    mock = _FakeDB()
     monkeypatch.setattr("app.api.payment.service.db", mock)
     return mock
 
@@ -186,10 +223,14 @@ class TestVerifyPayment:
         )
 
         # Verify cart was cleared
-        mock_db.cart.update.assert_called_once_with(
-            where={"userId": "user-1"},
-            data={"items": [], "cartValue": 0}
-        )
+        # The cart is looked up first and then updated BY ID, not by user - and the
+        # JSON column is wrapped in prisma's Json marker, which an exact-match
+        # assertion on a plain list cannot express.
+        mock_db.cart.update.assert_called_once()
+        assert mock_db.cart.update.call_args[1]["where"] == {"id": "cart-1"}
+        data = mock_db.cart.update.call_args[1]["data"]
+        assert data["cartValue"] == 0
+        assert getattr(data["items"], "data", data["items"]) == []
 
     async def test_verify_payment_success_partial_payment(self, mock_db, sample_payment_partial, sample_booking):
         """Test successful payment verification for partial payment."""

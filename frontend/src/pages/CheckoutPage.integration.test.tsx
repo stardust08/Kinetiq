@@ -171,18 +171,12 @@ describe('CheckoutPage Integration Tests', () => {
       fireEvent.click(screen.getByText('Continue to Date & Time'));
       
       await waitFor(() => {
-        expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
+        expect(screen.getByText('Select Time Slot')).toBeInTheDocument();
       });
 
-      // Select time
-      const timeInput = screen.getByLabelText('Time');
-      fireEvent.change(timeInput, { target: { value: '14:30' } });
-
-      // Note: Calendar date selection is complex, so we'll simulate by clicking continue
-      // In a real scenario, we'd need to interact with the calendar component
-      
-      // For testing purposes, we need to set a date programmatically
-      // Since we can't easily interact with the calendar, we'll test the payment step directly
+      // There is no free-text time to fill in any more - times are SLOTS fetched for a
+      // chosen date. Neither the calendar selection nor the slots endpoint is stubbed
+      // here, so the flow stops where a patient's would without a date.
       
       // Step 3: Navigate to payment (will be disabled without date, but we can test the flow)
       const continueButton = screen.getByText('Continue to Payment');
@@ -202,7 +196,7 @@ describe('CheckoutPage Integration Tests', () => {
       fireEvent.click(screen.getByText('Continue to Date & Time'));
       
       await waitFor(() => {
-        expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
+        expect(screen.getByText('Select Date')).toBeInTheDocument();
       });
 
       // Navigate back
@@ -222,17 +216,17 @@ describe('CheckoutPage Integration Tests', () => {
 
       // Initial step - Cart Review should be active
       const cartLabel = screen.getByText('Cart Review');
-      expect(cartLabel).toHaveClass('text-purple-600');
+      expect(cartLabel).toHaveClass('text-[#2F86C7]');
 
       // Navigate to date/time
       fireEvent.click(screen.getByText('Continue to Date & Time'));
       
       await waitFor(() => {
         const dateTimeLabel = screen.getByText('Date & Time');
-        expect(dateTimeLabel).toHaveClass('text-purple-600');
+        expect(dateTimeLabel).toHaveClass('text-[#2F86C7]');
         
         // Cart should be marked as completed
-        expect(cartLabel).toHaveClass('text-green-600');
+        expect(cartLabel).toHaveClass('text-emerald-400');
       });
     });
   });
@@ -659,8 +653,11 @@ describe('CheckoutPage Integration Tests', () => {
       fireEvent.click(screen.getByText('Continue to Date & Time'));
       
       await waitFor(() => {
-        expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
-        expect(screen.getByLabelText('Time')).toBeInTheDocument();
+        // The step offers a calendar and a slot picker; the picker asks for a date
+        // before it offers any time at all.
+        expect(screen.getByText('Select Date')).toBeInTheDocument();
+        expect(screen.getByText('Select Time Slot')).toBeInTheDocument();
+        expect(screen.getByText('Please select a date first')).toBeInTheDocument();
       });
     });
 

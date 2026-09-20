@@ -70,6 +70,47 @@ jobs:
         continue-on-error: true
         run: python scripts/repeatability.py --subjects 15 --sessions 3
 
+  api:
+    name: API and application tests (no database)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install
+        working-directory: backend
+        # The application stack minus the heavy extras. mediapipe, opencv and matplotlib
+        # are several hundred megabytes between them and none of them is imported by
+        # anything under test - pose estimation runs in the browser.
+        run: |
+          pip install fastapi starlette pydantic pydantic-settings python-dotenv \
+            python-jose bcrypt passlib boto3 email-validator python-multipart \
+            cryptography httpx prisma numpy scipy pytest pytest-asyncio
+
+      - name: Generate the Prisma client
+        working-directory: backend
+        # The service modules import app.db.client at module scope, so the generated
+        # client has to exist before collection, not before the first query.
+        run: python -m prisma generate
+
+      - name: API and application tests
+        working-directory: backend
+        # The WHOLE backend, with no database at all - 818 tests. Every suite either
+        # fakes the database or does not need one; the two that genuinely require a
+        # live Postgres are opt-in behind RUN_DB_INTEGRATION_TESTS and stay out of CI,
+        # because they assert against seeded data rather than against the code.
+        #
+        # This used to be limited to gait and ROM. The rest of app/api could not run
+        # here: those suites connected to whatever DATABASE_URL pointed at, which in
+        # practice was the production database, and 54 of them failed while 52 errored.
+        env:
+          DATABASE_URL: postgresql://nobody:nobody@127.0.0.1:1/unreachable
+        run: python -m pytest app -q
+
   frontend:
     name: Frontend typecheck and tests
     runs-on: ubuntu-latest
@@ -99,11 +140,28 @@ jobs:
         continue-on-error: true
         run: npm run typecheck:all
 
-      - name: Tests (informational)
+      - name: Tests
         working-directory: frontend
-        # Not a gate yet either. 237 frontend tests fail on assertions that drifted from
-        # the UI long before this workflow existed. Turning this into a gate is the next
-        # piece of work; pretending it is one today would just train people to ignore a
-        # red build.
-        continue-on-error: true
+        # A gate. This was informational while 244 tests failed - about half on missing
+        # test wrappers, the rest on assertions that had drifted from a UI that moved
+        # on. All 1131 pass now, so a red build here means something broke.
         run: npm test
+
+      - name: Measurement and routing contract tests
+        working-directory: frontend
+        # A gate. These cover the parts of the frontend that decide what a patient is
+        # asked to do and where a button goes - a capture script that disagrees with the
+        # server's movement map, or a screening card advertising a route the Router does
+        # not serve. Router.navigation.test.tsx was committed empty and stayed that way,
+        # which is how the second of those stayed invisible.
+        run: >-
+          npx vitest run
+          src/lib/romMovements.test.ts
+          src/lib/captureOrientation.test.ts
+          src/lib/previousAssessment.test.ts
+          src/app/Router.navigation.test.tsx
+          src/utils/reportThresholds.nulls.test.ts
+          src/components/rom/ROMMetricsDisplay.test.tsx
+          src/components/rom/ROMCapture.test.tsx
+          src/pages/ROMAnalysisPage.test.tsx
+          src/pages/PostureAnalysisPage.payload.test.ts

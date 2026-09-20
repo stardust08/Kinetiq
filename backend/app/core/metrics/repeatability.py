@@ -52,6 +52,21 @@ MDC95: Dict[str, float] = {
     "trunk_lateral_shift_ratio": 0.007,
     "trunk_sagittal_lean": 0.341,
     "walking_speed_ratio": 0.030,
+    # Range of motion. Every one of these tracks change, which matters more here
+    # than anywhere else in the product: "how much further does the shoulder go
+    # than last visit" IS the ROM result, and before these were measured every ROM
+    # metric fell through to "does not track change" purely for want of a number.
+    "rom_cervical_lateral_flexion": 0.987,
+    "rom_elbow_flexion_left": 1.275,
+    "rom_elbow_flexion_right": 1.198,
+    "rom_hip_flexion_left": 0.758,
+    "rom_hip_flexion_right": 0.669,
+    "rom_knee_flexion_left": 0.861,
+    "rom_knee_flexion_right": 0.796,
+    "rom_shoulder_abduction_left": 0.722,
+    "rom_shoulder_abduction_right": 1.003,
+    "rom_shoulder_flexion_left": 0.858,
+    "rom_shoulder_flexion_right": 0.966,
 }
 
 # Metrics whose repeat sessions do not agree well enough to track change over time.

@@ -119,17 +119,13 @@ describe('CheckoutPage - Payment Initiation', () => {
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
+      expect(screen.getByText('Select Time Slot')).toBeInTheDocument();
     });
 
-    // Select time
-    const timeInput = screen.getByLabelText('Time');
-    fireEvent.change(timeInput, { target: { value: '14:30' } });
-
-    // Mock date selection by directly setting the state
-    // In a real scenario, the calendar component would handle this
-    // For testing, we'll simulate having both date and time selected
-    // by checking if the continue button becomes enabled
+    // This helper stops at the date/time step. There is no free-text time to fill in
+    // any more: times are SLOTS fetched for a chosen date, and neither the calendar
+    // selection nor the slots endpoint is stubbed here. The tests below assert what is
+    // reachable - that payment cannot be initiated without them.
   };
 
   it('should initiate payment when proceed to payment button is clicked', async () => {

@@ -16,7 +16,7 @@ describe('Auth API', () => {
 
       const result = await sendOtp('+1234567890', 'LOGIN');
 
-      expect(apiClient.post).toHaveBeenCalledWith('/auth/send-otp', {
+      expect(apiClient.post).toHaveBeenCalledWith('/api/auth/send-otp', {
         phone: '+1234567890',
         type: 'LOGIN',
       });
@@ -29,7 +29,7 @@ describe('Auth API', () => {
 
       await sendOtp('+1234567890');
 
-      expect(apiClient.post).toHaveBeenCalledWith('/auth/send-otp', {
+      expect(apiClient.post).toHaveBeenCalledWith('/api/auth/send-otp', {
         phone: '+1234567890',
         type: 'LOGIN',
       });
@@ -55,7 +55,7 @@ describe('Auth API', () => {
 
       const result = await verifyOtp('+1234567890', '123456');
 
-      expect(apiClient.post).toHaveBeenCalledWith('/auth/verify-otp', {
+      expect(apiClient.post).toHaveBeenCalledWith('/api/auth/verify-otp', {
         phone: '+1234567890',
         otp: '123456',
       });
@@ -80,7 +80,7 @@ describe('Auth API', () => {
 
       const result = await getCurrentUser();
 
-      expect(apiClient.get).toHaveBeenCalledWith('/auth/me');
+      expect(apiClient.get).toHaveBeenCalledWith('/api/auth/me');
       expect(result).toEqual(mockUser);
     });
   });
@@ -92,7 +92,7 @@ describe('Auth API', () => {
 
       const result = await logout();
 
-      expect(apiClient.post).toHaveBeenCalledWith('/auth/logout');
+      expect(apiClient.post).toHaveBeenCalledWith('/api/auth/logout');
       expect(result).toEqual({ message: 'Logged out successfully' });
     });
   });

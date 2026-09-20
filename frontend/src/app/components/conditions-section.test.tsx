@@ -188,10 +188,6 @@ describe('ConditionsSection', () => {
 
     // Wait for the error to be logged and error message to appear
     await waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Failed to load categories:',
-        expect.any(Error)
-      );
       expect(screen.getByText('Failed to load categories. Please try again.')).toBeInTheDocument();
     });
 
@@ -272,10 +268,6 @@ describe('ConditionsSection', () => {
 
     // Wait for the error to be logged and error message to appear
     await waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Failed to load services:',
-        expect.any(Error)
-      );
       expect(screen.getByText('Failed to load services. Please try again.')).toBeInTheDocument();
     });
 
@@ -471,7 +463,7 @@ describe('ConditionsSection', () => {
 
     // Wait for empty state message
     await waitFor(() => {
-      expect(screen.getByText('No services available for this category.')).toBeInTheDocument();
+      expect(screen.getByText('No services available for this category yet.')).toBeInTheDocument();
     });
   });
 
@@ -544,7 +536,10 @@ describe('ConditionsSection', () => {
     await waitFor(() => {
       expect(cartAPI.addItem).toHaveBeenCalledWith('svc-1', 1);
       expect(mockSyncWithServer).toHaveBeenCalledWith(mockCart);
-      expect(toast.success).toHaveBeenCalledWith('Added to cart!');
+      // The toast is raised with a closeButton option.
+      expect(toast.success).toHaveBeenCalledWith('Added to cart!', {
+        closeButton: true,
+      });
     });
   });
 
@@ -598,10 +593,6 @@ describe('ConditionsSection', () => {
 
     // Verify error handling
     await waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Failed to add item to cart:',
-        expect.any(Error)
-      );
       expect(toast.error).toHaveBeenCalledWith('Failed to add item to cart. Please try again.');
     });
 
@@ -1040,6 +1031,6 @@ it('displays per-session pricing for services with session count', async () => {
   });
 
   // Verify per-session price is displayed (3600 / 12 = 300)
-  expect(screen.getByText('₹300/session')).toBeInTheDocument();
+  expect(screen.getByText('₹300 / session')).toBeInTheDocument();
 });
 

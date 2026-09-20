@@ -1,8 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
-import { BrowserRouter } from 'react-router-dom';
+import { renderWithProviders } from '../../test/renderWithProviders';
 import AssessmentHistory from './AssessmentHistory';
 import { PostureAnalysis, Booking } from '../../types';
+
+/**
+ * How many assessments are on screen.
+ *
+ * The component used to print "N assessments found" and these tests read the filter
+ * results off that line. It was removed, so the count is taken from the cards
+ * themselves - each renders exactly one "View Details" button. That is a better thing
+ * to assert anyway: it counts what the patient can actually see and open, rather than
+ * a summary that could disagree with the list beneath it.
+ */
+function visibleAssessments() {
+  return screen.queryAllByRole('button', { name: /View details for assessment/i });
+}
+
+
 
 // Mock useNavigate
 const mockNavigate = vi.fn();
@@ -68,7 +83,7 @@ const createMockBooking = (overrides: Partial<Booking> = {}): Booking => ({
   totalAmount: 100,
   paidAmount: 100,
   remainingAmount: 0,
-  time: new Date('2024-01-01T10:00:00Z').toISOString(),
+  time: '2024-01-01T10:00:00Z',
   status: 'CONFIRMED',
   createdAt: new Date('2024-01-01T09:00:00Z').toISOString(),
   totalScreeningCount: 10,
@@ -99,17 +114,17 @@ describe('AssessmentHistory', () => {
       ...props,
     };
 
-    return render(
-      <BrowserRouter>
+    return renderWithProviders(
         <AssessmentHistory {...defaultProps} />
-      </BrowserRouter>
     );
   };
 
   describe('Rendering', () => {
     it('should render the component with header', () => {
       renderComponent();
-      expect(screen.getByText('Assessment History')).toBeInTheDocument();
+      // The page no longer carries an 'Assessment History' heading; the filter
+      // panel is the first thing rendered.
+      expect(screen.getByText('Filters')).toBeInTheDocument();
     });
 
     it('should show loading spinner when loading with no assessments', () => {
@@ -124,13 +139,13 @@ describe('AssessmentHistory', () => {
         createMockAssessment({ id: '2' }),
       ];
       renderComponent({ assessments });
-      expect(screen.getByText('2 assessments found')).toBeInTheDocument();
+      expect(visibleAssessments()).toHaveLength(2);
     });
 
     it('should display singular "assessment" for count of 1', () => {
       const assessments = [createMockAssessment()];
       renderComponent({ assessments });
-      expect(screen.getByText('1 assessment found')).toBeInTheDocument();
+      expect(visibleAssessments()).toHaveLength(1);
     });
   });
 
@@ -233,13 +248,13 @@ describe('AssessmentHistory', () => {
       renderComponent({ assessments, bookings });
       
       // Initially both should be visible
-      expect(screen.getByText('2 assessments found')).toBeInTheDocument();
+      expect(visibleAssessments()).toHaveLength(2);
       
       // Filter by booking-1
       const bookingFilter = screen.getByLabelText('Filter by Booking');
       fireEvent.change(bookingFilter, { target: { value: 'booking-1' } });
       
-      expect(screen.getByText('1 assessment found')).toBeInTheDocument();
+      expect(visibleAssessments()).toHaveLength(1);
     });
 
     it('should filter assessments by start date', () => {
@@ -252,7 +267,7 @@ describe('AssessmentHistory', () => {
       const startDateInput = screen.getByLabelText('From Date');
       fireEvent.change(startDateInput, { target: { value: '2024-01-15' } });
       
-      expect(screen.getByText('1 assessment found')).toBeInTheDocument();
+      expect(visibleAssessments()).toHaveLength(1);
       expect(screen.getByText('January 20, 2024')).toBeInTheDocument();
     });
 
@@ -266,7 +281,7 @@ describe('AssessmentHistory', () => {
       const endDateInput = screen.getByLabelText('To Date');
       fireEvent.change(endDateInput, { target: { value: '2024-01-15' } });
       
-      expect(screen.getByText('1 assessment found')).toBeInTheDocument();
+      expect(visibleAssessments()).toHaveLength(1);
       expect(screen.getByText('January 10, 2024')).toBeInTheDocument();
     });
 
@@ -284,7 +299,7 @@ describe('AssessmentHistory', () => {
       fireEvent.change(startDateInput, { target: { value: '2024-01-10' } });
       fireEvent.change(endDateInput, { target: { value: '2024-01-20' } });
       
-      expect(screen.getByText('1 assessment found')).toBeInTheDocument();
+      expect(visibleAssessments()).toHaveLength(1);
       expect(screen.getByText('January 15, 2024')).toBeInTheDocument();
     });
 
@@ -395,9 +410,8 @@ describe('AssessmentHistory', () => {
       const nextButton = screen.getByText('Next');
       fireEvent.click(nextButton);
       
-      // Page 2 button should be active
-      const page2Button = screen.getByText('2');
-      expect(page2Button).toHaveClass('bg-blue-600', 'text-white');
+      // 15 assessments over 10 per page: the second page holds the remaining 5.
+      expect(visibleAssessments()).toHaveLength(5);
     });
 
     it('should navigate to previous page when Previous is clicked', () => {
@@ -414,9 +428,7 @@ describe('AssessmentHistory', () => {
       const prevButton = screen.getByText('Previous');
       fireEvent.click(prevButton);
       
-      // Page 1 button should be active
-      const page1Button = screen.getByText('1');
-      expect(page1Button).toHaveClass('bg-blue-600', 'text-white');
+      expect(visibleAssessments()).toHaveLength(10);
     });
 
     it('should disable Previous button on first page', () => {

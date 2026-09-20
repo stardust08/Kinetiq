@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { createQueryWrapper } from '../test/queryWrapper';
 import { useCart } from './useCart';
 import { useCartStore } from '../store/cartStore';
 import * as cartApi from '../api/cart';
@@ -38,7 +39,7 @@ describe('useCart', () => {
   });
 
   it('should return initial empty cart state', () => {
-    const { result } = renderHook(() => useCart());
+    const { result } = renderHook(() => useCart(), { wrapper: createQueryWrapper() });
 
     expect(result.current.items).toEqual([]);
     expect(result.current.total).toBe(0);
@@ -48,7 +49,7 @@ describe('useCart', () => {
   it('should fetch cart from server', async () => {
     vi.mocked(cartApi.getCart).mockResolvedValue(mockCart);
 
-    const { result } = renderHook(() => useCart());
+    const { result } = renderHook(() => useCart(), { wrapper: createQueryWrapper() });
 
     await act(async () => {
       const cart = await result.current.fetchCart();
@@ -81,7 +82,7 @@ describe('useCart', () => {
 
     vi.mocked(cartApi.addItem).mockResolvedValue(updatedCart);
 
-    const { result } = renderHook(() => useCart());
+    const { result } = renderHook(() => useCart(), { wrapper: createQueryWrapper() });
 
     await act(async () => {
       const cart = await result.current.addToCart('service-2', 1);
@@ -111,7 +112,7 @@ describe('useCart', () => {
 
     vi.mocked(cartApi.removeItem).mockResolvedValue(emptyCart);
 
-    const { result } = renderHook(() => useCart());
+    const { result } = renderHook(() => useCart(), { wrapper: createQueryWrapper() });
 
     await act(async () => {
       const cart = await result.current.removeFromCart('item-1');
@@ -146,7 +147,7 @@ describe('useCart', () => {
 
     vi.mocked(cartApi.updateItem).mockResolvedValue(updatedCart);
 
-    const { result } = renderHook(() => useCart());
+    const { result } = renderHook(() => useCart(), { wrapper: createQueryWrapper() });
 
     await act(async () => {
       const cart = await result.current.updateQuantity('item-1', 5);
@@ -176,7 +177,7 @@ describe('useCart', () => {
 
     vi.mocked(cartApi.clearCart).mockResolvedValue(emptyCart);
 
-    const { result } = renderHook(() => useCart());
+    const { result } = renderHook(() => useCart(), { wrapper: createQueryWrapper() });
 
     expect(result.current.items).toHaveLength(1);
 

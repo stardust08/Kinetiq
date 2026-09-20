@@ -26,6 +26,16 @@ export const AuthButton: React.FC = () => {
     setIsLoggingOut(true);
     try {
       await logout();
+    } catch (error) {
+      // A failed logout REQUEST does not mean a failed logout: useAuth clears the
+      // local session in its own `finally`, so the user is signed out either way and
+      // there is nothing to tell them.
+      //
+      // What there was, until now, was an unhandled promise rejection: neither this
+      // handler nor useAuth caught, and onClick discards the returned promise - so a
+      // server hiccup on sign-out surfaced in the browser console as an uncaught
+      // error, on a path that had actually succeeded.
+      console.warn('Logout request failed; local session cleared anyway.', error);
     } finally {
       setIsLoggingOut(false);
     }

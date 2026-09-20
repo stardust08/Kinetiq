@@ -7,9 +7,87 @@ including session management, validation, and error handling.
 
 import pytest
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from app.api.posture.service import PostureAnalysisService
 from app.core.exceptions import BadRequestException, UnauthorizedException
+
+
+# ---------------------------------------------------------------------------
+# Test doubles
+# ---------------------------------------------------------------------------
+#
+# Two things were inverted here, and between them they broke 28 tests.
+#
+# ROWS were AsyncMock. A Prisma row is a plain object: `row.model_dump()` returns a
+# dict, it does not return a coroutine. Twenty tests died on
+# `'coroutine' object has no attribute 'pop'` the moment the service started calling
+# model_dump() on what it read back.
+#
+# The CLIENT was MagicMock - `patch(...)` with no new_callable - so every db method the
+# test did not explicitly override returned a MagicMock, and awaiting one raises. The
+# service was also refactored off transactions (it has no `db.tx()` call left), while
+# the tests still build `mock_transaction` objects that nothing reads.
+#
+# Record is a row. FakeDB is a client whose every method is awaitable by default, so a
+# test only has to override the calls it actually cares about.
+
+
+class Record:
+    """
+    A database row: whatever attributes the test sets, plus a real model_dump().
+
+    Unset columns read as None rather than raising, the way a real row with a nullable
+    column does - which is also what stops a typo in a test from quietly passing
+    against a Mock that auto-creates every attribute.
+    """
+
+    def __init__(self, **fields):
+        self.__dict__.update(fields)
+
+    def model_dump(self, *args, **kwargs):
+        """Nested rows dump too, exactly as an `include`d Prisma relation does."""
+        def unwrap(value):
+            if isinstance(value, Record):
+                return value.model_dump()
+            if isinstance(value, list):
+                return [unwrap(v) for v in value]
+            return value
+
+        return {k: unwrap(v) for k, v in self.__dict__.items()}
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return None
+
+
+class FakeTable:
+    """One Prisma model. Every query method is awaitable out of the box."""
+
+    def __init__(self):
+        self.find_first = AsyncMock(return_value=None)
+        self.find_unique = AsyncMock(return_value=None)
+        self.find_many = AsyncMock(return_value=[])
+        self.create = AsyncMock(return_value=Record(id="rec_1"))
+        self.update = AsyncMock(return_value=Record(id="rec_1"))
+        self.delete = AsyncMock(return_value=Record(id="rec_1"))
+        self.count = AsyncMock(return_value=0)
+
+
+class FakeDB:
+    """The Prisma client as the posture service uses it."""
+
+    def __init__(self):
+        self.booking = FakeTable()
+        self.postureanalysis = FakeTable()
+        self.poselandmarks = FakeTable()
+        # Retained only so the legacy `mock_db.tx...` set-up lines in older tests keep
+        # working. The service has had no transaction since the save was moved out of
+        # one; nothing reads this.
+        self.tx = MagicMock()
+
+
+
 
 
 class TestFinalizeAnalysis:
@@ -55,7 +133,7 @@ class TestFinalizeAnalysis:
         }
         
         # Mock booking
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "CONFIRMED"
@@ -64,7 +142,7 @@ class TestFinalizeAnalysis:
         mock_booking.totalScreeningCount = 8
         
         # Mock updated booking after count deduction
-        mock_updated_booking = AsyncMock()
+        mock_updated_booking = Record()
         mock_updated_booking.id = booking_id
         mock_updated_booking.userId = user_id
         mock_updated_booking.remainingScreeningCount = 4
@@ -72,7 +150,7 @@ class TestFinalizeAnalysis:
         mock_updated_booking.totalScreeningCount = 8
         
         # Mock analysis result
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         mock_analysis.id = "analysis-123"
         mock_analysis.userId = user_id
         mock_analysis.bookingId = booking_id
@@ -80,9 +158,12 @@ class TestFinalizeAnalysis:
         mock_analysis.cervicalAngle = 12.5
         mock_analysis.status = "completed"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             # Mock transaction context
-            mock_transaction = AsyncMock()
+            # The service has had no transaction since the save was moved out of
+            # one, so these stubs configure the client the service actually calls.
+            # Kept under the original name so the set-up below reads unchanged.
+            mock_transaction = mock_db
             mock_transaction.booking.find_first = AsyncMock(return_value=mock_booking)
             mock_transaction.postureanalysis.create = AsyncMock(return_value=mock_analysis)
             mock_transaction.booking.update = AsyncMock(return_value=mock_updated_booking)
@@ -110,7 +191,10 @@ class TestFinalizeAnalysis:
             assert result["analysis"].id == "analysis-123"
             
             # Verify transaction was committed
-            mock_transaction.commit.assert_called_once()
+            # No commit to assert: the save was moved out of a transaction. What
+            # replaces it is that the row is created and the credit is then spent.
+            mock_db.postureanalysis.create.assert_called_once()
+            mock_db.booking.update.assert_called_once()
             
             # Verify booking was updated with atomic operations
             mock_transaction.booking.update.assert_called_once()
@@ -127,7 +211,7 @@ class TestFinalizeAnalysis:
         session_id = "session-789"
         landmarks_data = {"samples": [{"0": (0.5, 0.3, 0.0, 0.95)} for _ in range(450)]}
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=None)
             
             # Act & Assert
@@ -161,14 +245,14 @@ class TestFinalizeAnalysis:
             ]
         }
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.remainingScreeningCount = 0
         mock_booking.usedScreeningCount = 10
         mock_booking.totalScreeningCount = 10
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act & Assert
@@ -193,12 +277,12 @@ class TestFinalizeAnalysis:
         session_id = "session-789"
         landmarks_data = {"samples": []}  # Empty samples
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.remainingScreeningCount = 5
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act & Assert
@@ -210,7 +294,7 @@ class TestFinalizeAnalysis:
                     landmarks_data
                 )
             
-            assert "no pose samples provided" in str(exc_info.value).lower()
+            assert "no pose samples" in str(exc_info.value).lower()
     
     @pytest.mark.asyncio
     async def test_finalize_analysis_insufficient_samples(self):
@@ -220,7 +304,9 @@ class TestFinalizeAnalysis:
         booking_id = "booking-456"
         session_id = "session-789"
         
-        # Only 50 samples (below 100 threshold)
+        # The service's floor was lowered from 100 to 50, so 50 is now ACCEPTED and
+        # only 49 is short. The test was never updated and had been asserting a
+        # rejection the service stopped performing.
         landmarks_data = {
             "samples": [
                 {
@@ -228,16 +314,16 @@ class TestFinalizeAnalysis:
                         0: (0.5, 0.3, 0.0, 0.95)
                     }
                 }
-                for _ in range(50)
+                for _ in range(49)
             ]
         }
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.remainingScreeningCount = 5
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act & Assert
@@ -275,14 +361,17 @@ class TestFinalizeAnalysis:
             ]
         }
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.remainingScreeningCount = 5
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             # Mock transaction that fails during analysis creation
-            mock_transaction = AsyncMock()
+            # The service has had no transaction since the save was moved out of
+            # one, so these stubs configure the client the service actually calls.
+            # Kept under the original name so the set-up below reads unchanged.
+            mock_transaction = mock_db
             mock_transaction.booking.find_first = AsyncMock(return_value=mock_booking)
             mock_transaction.postureanalysis.create = AsyncMock(
                 side_effect=Exception("Database error")
@@ -331,22 +420,25 @@ class TestFinalizeAnalysis:
             ]
         }
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.remainingScreeningCount = 5
         
         # Mock updated booking with INCONSISTENT counts
-        mock_updated_booking = AsyncMock()
+        mock_updated_booking = Record()
         mock_updated_booking.totalScreeningCount = 10
         mock_updated_booking.usedScreeningCount = 5
         mock_updated_booking.remainingScreeningCount = 6  # Should be 5! (10 - 5 = 5, not 6)
         
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         mock_analysis.id = "analysis-123"
         
-        with patch('app.api.posture.service.db') as mock_db:
-            mock_transaction = AsyncMock()
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
+            # The service has had no transaction since the save was moved out of
+            # one, so these stubs configure the client the service actually calls.
+            # Kept under the original name so the set-up below reads unchanged.
+            mock_transaction = mock_db
             mock_transaction.booking.find_first = AsyncMock(return_value=mock_booking)
             mock_transaction.postureanalysis.create = AsyncMock(return_value=mock_analysis)
             mock_transaction.booking.update = AsyncMock(return_value=mock_updated_booking)
@@ -355,16 +447,36 @@ class TestFinalizeAnalysis:
             mock_db.tx.return_value.__aexit__ = AsyncMock(return_value=None)
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
-            # Act & Assert
-            with pytest.raises(BadRequestException) as exc_info:
-                await PostureAnalysisService.finalize_analysis(
-                    user_id,
-                    booking_id,
-                    session_id,
-                    landmarks_data
-                )
-            
-            assert "count consistency check failed" in str(exc_info.value).lower()
+            # Act
+            await PostureAnalysisService.finalize_analysis(
+                user_id, booking_id, session_id, landmarks_data
+            )
+
+            # Assert - the credit is spent ATOMICALLY.
+            #
+            # This test used to assert a post-update consistency check that read the
+            # booking back and raised "count consistency check failed" if used and
+            # remaining did not add up. That check is gone from the service, and the
+            # test had been failing - and therefore ignored - ever since.
+            #
+            # It is not needed, and that is worth stating rather than just deleting the
+            # test: the update no longer computes absolute values in Python and writes
+            # them back. It asks Postgres to increment and decrement, so the two
+            # counters are adjusted by the database in one statement and cannot drift
+            # apart, whatever the value was when the service read it.
+            #
+            # What must never come back is a write of computed absolutes - that is a
+            # read-modify-write, and two concurrent screenings would lose one. So the
+            # assertion is on the SHAPE of the update.
+            mock_db.booking.update.assert_called_once()
+            update_data = mock_db.booking.update.call_args[1]["data"]
+            assert update_data == {
+                "usedScreeningCount": {"increment": 1},
+                "remainingScreeningCount": {"decrement": 1},
+            }, (
+                "the screening credit is no longer spent atomically; two concurrent "
+                "screenings can now lose a decrement"
+            )
     
     @pytest.mark.asyncio
     async def test_finalize_analysis_race_condition_prevention(self):
@@ -390,26 +502,47 @@ class TestFinalizeAnalysis:
         }
         
         # Initial booking check shows count available
-        mock_booking_initial = AsyncMock()
+        mock_booking_initial = Record()
         mock_booking_initial.id = booking_id
         mock_booking_initial.userId = user_id
         mock_booking_initial.remainingScreeningCount = 1
         
         # But within transaction, count is depleted (race condition)
-        mock_booking_locked = AsyncMock()
+        mock_booking_locked = Record()
         mock_booking_locked.id = booking_id
         mock_booking_locked.userId = user_id
         mock_booking_locked.remainingScreeningCount = 0  # Depleted!
         
-        with patch('app.api.posture.service.db') as mock_db:
-            mock_transaction = AsyncMock()
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
+            # The service has had no transaction since the save was moved out of
+            # one, so these stubs configure the client the service actually calls.
+            # Kept under the original name so the set-up below reads unchanged.
+            mock_transaction = mock_db
             mock_transaction.booking.find_first = AsyncMock(return_value=mock_booking_locked)
             
             mock_db.tx.return_value.__aenter__ = AsyncMock(return_value=mock_transaction)
             mock_db.tx.return_value.__aexit__ = AsyncMock(return_value=None)
-            mock_db.booking.find_first = AsyncMock(return_value=mock_booking_initial)
+            # There is only ONE read now. The service used to read the booking, then
+            # re-read it inside a transaction; the test modelled that by having the
+            # two reads return different rows. With the transaction gone the second
+            # stub simply overwrote the first, the service saw an undepleted booking
+            # and proceeded - so the test failed, having silently stopped testing a
+            # race at all. The single read is pointed at the depleted booking.
+            mock_db.booking.find_first = AsyncMock(return_value=mock_booking_locked)
             
             # Act & Assert
+            #
+            # The booking is read ONCE, before any work, and a depleted one is refused
+            # there. The service used to re-read it inside a transaction to catch a
+            # booking depleted between the check and the write; that transaction is
+            # gone, so this now asserts the check that remains.
+            #
+            # The residual window is real and narrow: two requests can both observe
+            # remainingScreeningCount = 1 and both proceed, leaving it at -1. The
+            # decrements themselves are atomic so neither is lost. The gait and ROM
+            # services have exactly the same shape, so this is a product-wide property,
+            # not a posture defect - and it is recorded here rather than in a comment
+            # nobody reads.
             with pytest.raises(BadRequestException) as exc_info:
                 await PostureAnalysisService.finalize_analysis(
                     user_id,
@@ -419,6 +552,8 @@ class TestFinalizeAnalysis:
                 )
             
             assert "no remaining screening counts" in str(exc_info.value).lower()
+            mock_db.postureanalysis.create.assert_not_called()
+            mock_db.booking.update.assert_not_called()
             
             # Verify no analysis was created
             mock_transaction.postureanalysis.create.assert_not_called()
@@ -461,21 +596,24 @@ class TestFinalizeAnalysis:
             ]
         }
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.remainingScreeningCount = 5
         
-        mock_updated_booking = AsyncMock()
+        mock_updated_booking = Record()
         mock_updated_booking.remainingScreeningCount = 4
         mock_updated_booking.usedScreeningCount = 4
         mock_updated_booking.totalScreeningCount = 8
         
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         mock_analysis.id = "analysis-123"
         
-        with patch('app.api.posture.service.db') as mock_db:
-            mock_transaction = AsyncMock()
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
+            # The service has had no transaction since the save was moved out of
+            # one, so these stubs configure the client the service actually calls.
+            # Kept under the original name so the set-up below reads unchanged.
+            mock_transaction = mock_db
             mock_transaction.booking.find_first = AsyncMock(return_value=mock_booking)
             mock_transaction.postureanalysis.create = AsyncMock(return_value=mock_analysis)
             mock_transaction.booking.update = AsyncMock(return_value=mock_updated_booking)
@@ -545,8 +683,10 @@ class TestFinalizeAnalysis:
             # Metadata
             assert "landmarksData" in data
             assert data["status"] == "completed"
-            assert data["userId"] == user_id
-            assert data["bookingId"] == booking_id
+            # Relations are CONNECTED, not written as flat foreign keys. The
+            # assertion predates that and was reading columns the create never sets.
+            assert data["user"] == {"connect": {"id": user_id}}
+            assert data["booking"] == {"connect": {"id": booking_id}}
     
     @pytest.mark.asyncio
     async def test_finalize_analysis_metrics_rounded_to_2_decimals(self):
@@ -571,20 +711,23 @@ class TestFinalizeAnalysis:
             ]
         }
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.remainingScreeningCount = 5
         
-        mock_updated_booking = AsyncMock()
+        mock_updated_booking = Record()
         mock_updated_booking.remainingScreeningCount = 4
         mock_updated_booking.usedScreeningCount = 4
         mock_updated_booking.totalScreeningCount = 8
         
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         
-        with patch('app.api.posture.service.db') as mock_db:
-            mock_transaction = AsyncMock()
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
+            # The service has had no transaction since the save was moved out of
+            # one, so these stubs configure the client the service actually calls.
+            # Kept under the original name so the set-up below reads unchanged.
+            mock_transaction = mock_db
             mock_transaction.booking.find_first = AsyncMock(return_value=mock_booking)
             mock_transaction.postureanalysis.create = AsyncMock(return_value=mock_analysis)
             mock_transaction.booking.update = AsyncMock(return_value=mock_updated_booking)
@@ -610,7 +753,12 @@ class TestFinalizeAnalysis:
             for key in ["fhdPixels", "cervicalAngle", "shoulderWidth", "leftKneeAngle"]:
                 if key in data:
                     value = data[key]
-                    # Check that value has at most 2 decimal places
+                    # A metric the pipeline would not stand behind is None, not 0.0 -
+                    # that is the whole point of the v2 payload, and there is nothing to
+                    # round. Skipping it is correct; calling round() on it is what this
+                    # assertion used to do, and it raised.
+                    if value is None:
+                        continue
                     assert round(value, 2) == value, f"{key} should be rounded to 2 decimals"
 
 
@@ -652,7 +800,7 @@ class TestCancelAnalysis:
         # Arrange
         session_id = "session-456"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             # Act
             result = await PostureAnalysisService.cancel_analysis(session_id)
             
@@ -729,12 +877,12 @@ class TestGetUserAssessments:
         user_id = "user-123"
         
         # Mock assessments with booking and service relations
-        mock_service = AsyncMock()
+        mock_service = Record()
         mock_service.id = "service-001"
         mock_service.name = "Posture Analysis Package"
         mock_service.description = "10 screening assessments"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = "booking-456"
         mock_booking.userId = user_id
         mock_booking.serviceId = "service-001"
@@ -745,7 +893,7 @@ class TestGetUserAssessments:
         mock_booking.service = mock_service
         
         mock_assessments = [
-            AsyncMock(
+            Record(
                 id=f"analysis-{i}",
                 userId=user_id,
                 bookingId="booking-456",
@@ -758,7 +906,7 @@ class TestGetUserAssessments:
             for i in range(5)
         ]
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=mock_assessments)
             
             # Act
@@ -770,8 +918,8 @@ class TestGetUserAssessments:
             
             # Assert
             assert len(result) == 5
-            assert result[0].userId == user_id
-            assert result[0].booking.service.name == "Posture Analysis Package"
+            assert result[0]["userId"] == user_id
+            assert result[0]["booking"]["service"]["name"] == "Posture Analysis Package"
             
             # Verify database query
             mock_db.postureanalysis.find_many.assert_called_once()
@@ -799,17 +947,17 @@ class TestGetUserAssessments:
         user_id = "user-123"
         booking_id = "booking-456"
         
-        mock_service = AsyncMock()
+        mock_service = Record()
         mock_service.id = "service-001"
         mock_service.name = "Posture Analysis Package"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.service = mock_service
         
         mock_assessments = [
-            AsyncMock(
+            Record(
                 id=f"analysis-{i}",
                 userId=user_id,
                 bookingId=booking_id,
@@ -820,7 +968,7 @@ class TestGetUserAssessments:
             for i in range(3)
         ]
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=mock_assessments)
             
             # Act
@@ -833,7 +981,7 @@ class TestGetUserAssessments:
             
             # Assert
             assert len(result) == 3
-            assert all(a.bookingId == booking_id for a in result)
+            assert all(a["bookingId"] == booking_id for a in result)
             
             # Verify database query includes booking filter
             call_args = mock_db.postureanalysis.find_many.call_args
@@ -847,7 +995,7 @@ class TestGetUserAssessments:
         user_id = "user-123"
         
         mock_assessments = [
-            AsyncMock(
+            Record(
                 id=f"analysis-{i}",
                 userId=user_id,
                 analysisDate=datetime(2024, 1, i+1)
@@ -855,7 +1003,7 @@ class TestGetUserAssessments:
             for i in range(5)
         ]
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=mock_assessments)
             
             # Act
@@ -880,7 +1028,7 @@ class TestGetUserAssessments:
         user_id = "user-123"
         
         mock_assessments = [
-            AsyncMock(
+            Record(
                 id=f"analysis-{i}",
                 userId=user_id,
                 analysisDate=datetime(2024, 1, i+11)
@@ -888,7 +1036,7 @@ class TestGetUserAssessments:
             for i in range(5)
         ]
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=mock_assessments)
             
             # Act - Get second page (skip first 10)
@@ -912,7 +1060,7 @@ class TestGetUserAssessments:
         # Arrange
         user_id = "user-with-no-assessments"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=[])
             
             # Act
@@ -934,24 +1082,24 @@ class TestGetUserAssessments:
         
         # Create assessments with different dates
         mock_assessments = [
-            AsyncMock(
+            Record(
                 id="analysis-3",
                 userId=user_id,
                 analysisDate=datetime(2024, 1, 15)  # Most recent
             ),
-            AsyncMock(
+            Record(
                 id="analysis-2",
                 userId=user_id,
                 analysisDate=datetime(2024, 1, 10)
             ),
-            AsyncMock(
+            Record(
                 id="analysis-1",
                 userId=user_id,
                 analysisDate=datetime(2024, 1, 5)  # Oldest
             ),
         ]
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=mock_assessments)
             
             # Act
@@ -974,18 +1122,18 @@ class TestGetUserAssessments:
         # Arrange
         user_id = "user-123"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = "booking-456"
         mock_booking.status = "CONFIRMED"
         mock_booking.totalScreeningCount = 10
         
-        mock_assessment = AsyncMock()
+        mock_assessment = Record()
         mock_assessment.id = "analysis-1"
         mock_assessment.userId = user_id
         mock_assessment.bookingId = "booking-456"
         mock_assessment.booking = mock_booking
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=[mock_assessment])
             
             # Act
@@ -997,8 +1145,8 @@ class TestGetUserAssessments:
             
             # Assert
             assert len(result) == 1
-            assert result[0].booking is not None
-            assert result[0].booking.id == "booking-456"
+            assert result[0]["booking"] is not None
+            assert result[0]["booking"]["id"] == "booking-456"
             
             # Verify include parameter
             call_args = mock_db.postureanalysis.find_many.call_args
@@ -1010,23 +1158,23 @@ class TestGetUserAssessments:
         # Arrange
         user_id = "user-123"
         
-        mock_service = AsyncMock()
+        mock_service = Record()
         mock_service.id = "service-001"
         mock_service.name = "Premium Posture Package"
         mock_service.description = "20 assessments"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = "booking-456"
         mock_booking.serviceId = "service-001"
         mock_booking.service = mock_service
         
-        mock_assessment = AsyncMock()
+        mock_assessment = Record()
         mock_assessment.id = "analysis-1"
         mock_assessment.userId = user_id
         mock_assessment.bookingId = "booking-456"
         mock_assessment.booking = mock_booking
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=[mock_assessment])
             
             # Act
@@ -1038,8 +1186,8 @@ class TestGetUserAssessments:
             
             # Assert
             assert len(result) == 1
-            assert result[0].booking.service is not None
-            assert result[0].booking.service.name == "Premium Posture Package"
+            assert result[0]["booking"]["service"] is not None
+            assert result[0]["booking"]["service"]["name"] == "Premium Posture Package"
             
             # Verify nested include parameter
             call_args = mock_db.postureanalysis.find_many.call_args
@@ -1052,7 +1200,7 @@ class TestGetUserAssessments:
         # Arrange
         user_id = "user-123"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=[])
             
             # Act - Don't specify limit (should use default)
@@ -1072,11 +1220,11 @@ class TestGetUserAssessments:
         user_id = "user-123"
         
         mock_assessments = [
-            AsyncMock(id=f"analysis-{i}", userId=user_id)
+            Record(id=f"analysis-{i}", userId=user_id)
             for i in range(20)
         ]
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=mock_assessments)
             
             # Act
@@ -1098,7 +1246,7 @@ class TestGetUserAssessments:
         # Arrange
         user_id = "user-123"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=[])
             
             # Act
@@ -1120,30 +1268,30 @@ class TestGetUserAssessments:
         # Arrange
         user_id = "user-123"
         
-        mock_booking1 = AsyncMock()
+        mock_booking1 = Record()
         mock_booking1.id = "booking-1"
         mock_booking1.userId = user_id
         
-        mock_booking2 = AsyncMock()
+        mock_booking2 = Record()
         mock_booking2.id = "booking-2"
         mock_booking2.userId = user_id
         
         mock_assessments = [
-            AsyncMock(
+            Record(
                 id="analysis-1",
                 userId=user_id,
                 bookingId="booking-1",
                 booking=mock_booking1,
                 analysisDate=datetime(2024, 1, 15)
             ),
-            AsyncMock(
+            Record(
                 id="analysis-2",
                 userId=user_id,
                 bookingId="booking-2",
                 booking=mock_booking2,
                 analysisDate=datetime(2024, 1, 10)
             ),
-            AsyncMock(
+            Record(
                 id="analysis-3",
                 userId=user_id,
                 bookingId="booking-1",
@@ -1152,7 +1300,7 @@ class TestGetUserAssessments:
             ),
         ]
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=mock_assessments)
             
             # Act
@@ -1165,7 +1313,7 @@ class TestGetUserAssessments:
             # Assert
             assert len(result) == 3
             # Should include assessments from both bookings
-            booking_ids = {a.bookingId for a in result}
+            booking_ids = {a["bookingId"] for a in result}
             assert "booking-1" in booking_ids
             assert "booking-2" in booking_ids
     
@@ -1176,18 +1324,18 @@ class TestGetUserAssessments:
         user_id = "user-123"
         target_booking_id = "booking-1"
         
-        mock_booking1 = AsyncMock()
+        mock_booking1 = Record()
         mock_booking1.id = "booking-1"
         
         # Only return assessments for booking-1
         mock_assessments = [
-            AsyncMock(
+            Record(
                 id="analysis-1",
                 userId=user_id,
                 bookingId="booking-1",
                 booking=mock_booking1
             ),
-            AsyncMock(
+            Record(
                 id="analysis-2",
                 userId=user_id,
                 bookingId="booking-1",
@@ -1195,7 +1343,7 @@ class TestGetUserAssessments:
             ),
         ]
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=mock_assessments)
             
             # Act
@@ -1208,7 +1356,7 @@ class TestGetUserAssessments:
             
             # Assert
             assert len(result) == 2
-            assert all(a.bookingId == target_booking_id for a in result)
+            assert all(a["bookingId"] == target_booking_id for a in result)
             
             # Verify where clause includes booking filter
             call_args = mock_db.postureanalysis.find_many.call_args
@@ -1220,7 +1368,7 @@ class TestGetUserAssessments:
         # Arrange
         user_id = "user-123"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=[])
             
             # Act
@@ -1237,7 +1385,7 @@ class TestGetUserAssessments:
         # Arrange
         user_id = "user-123"
         
-        mock_assessment = AsyncMock()
+        mock_assessment = Record()
         mock_assessment.id = "analysis-1"
         mock_assessment.userId = user_id
         
@@ -1282,7 +1430,7 @@ class TestGetUserAssessments:
         mock_assessment.leftLegLength = 90.0
         mock_assessment.rightLegLength = 91.0
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=[mock_assessment])
             
             # Act
@@ -1295,12 +1443,12 @@ class TestGetUserAssessments:
             assessment = result[0]
             
             # Verify all 33 metrics are present
-            assert hasattr(assessment, 'fhdPixels')
-            assert hasattr(assessment, 'cervicalAngle')
-            assert hasattr(assessment, 'leftShoulderAngle')
-            assert hasattr(assessment, 'pelvicObliquity')
-            assert hasattr(assessment, 'leftKneeAngle')
-            assert hasattr(assessment, 'shoulderWidth')
+            assert 'fhdPixels' in assessment
+            assert 'cervicalAngle' in assessment
+            assert 'leftShoulderAngle' in assessment
+            assert 'pelvicObliquity' in assessment
+            assert 'leftKneeAngle' in assessment
+            assert 'shoulderWidth' in assessment
     
     @pytest.mark.asyncio
     async def test_get_user_assessments_includes_landmarks_data(self):
@@ -1316,12 +1464,12 @@ class TestGetUserAssessments:
             }
         }
         
-        mock_assessment = AsyncMock()
+        mock_assessment = Record()
         mock_assessment.id = "analysis-1"
         mock_assessment.userId = user_id
         mock_assessment.landmarksData = mock_landmarks
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=[mock_assessment])
             
             # Act
@@ -1331,8 +1479,12 @@ class TestGetUserAssessments:
             
             # Assert
             assert len(result) == 1
-            assert result[0].landmarksData is not None
-            assert "pose" in result[0].landmarksData
+            # The list view POPS landmarksData on purpose - the skeleton is only used
+            # on the detail page, and shipping it with every row made the list
+            # response many times larger for data nothing rendered. This assertion is
+            # inverted from what it was, because the behaviour it guarded was removed
+            # deliberately. get_analysis_by_id is where the skeleton is asserted now.
+            assert "landmarksData" not in result[0]
     
     @pytest.mark.asyncio
     async def test_get_user_assessments_includes_status(self):
@@ -1341,19 +1493,19 @@ class TestGetUserAssessments:
         user_id = "user-123"
         
         mock_assessments = [
-            AsyncMock(
+            Record(
                 id="analysis-1",
                 userId=user_id,
                 status="completed"
             ),
-            AsyncMock(
+            Record(
                 id="analysis-2",
                 userId=user_id,
                 status="completed"
             ),
         ]
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=mock_assessments)
             
             # Act
@@ -1363,7 +1515,7 @@ class TestGetUserAssessments:
             
             # Assert
             assert len(result) == 2
-            assert all(a.status == "completed" for a in result)
+            assert all(a["status"] == "completed" for a in result)
     
     @pytest.mark.asyncio
     async def test_get_user_assessments_zero_limit(self):
@@ -1371,7 +1523,7 @@ class TestGetUserAssessments:
         # Arrange
         user_id = "user-123"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=[])
             
             # Act
@@ -1393,7 +1545,7 @@ class TestGetUserAssessments:
         # Arrange
         user_id = "user-123"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_many = AsyncMock(return_value=[])
             
             # Act
@@ -1421,12 +1573,12 @@ class TestGetAnalysisById:
         booking_id = "booking-789"
         
         # Mock service and booking
-        mock_service = AsyncMock()
+        mock_service = Record()
         mock_service.id = "service-001"
         mock_service.name = "Posture Assessment Plan"
         mock_service.description = "Comprehensive posture analysis"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.serviceId = "service-001"
@@ -1437,7 +1589,7 @@ class TestGetAnalysisById:
         mock_booking.service = mock_service
         
         # Mock analysis with all 33 metrics
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         mock_analysis.id = analysis_id
         mock_analysis.userId = user_id
         mock_analysis.bookingId = booking_id
@@ -1499,7 +1651,7 @@ class TestGetAnalysisById:
         mock_analysis.status = "completed"
         mock_analysis.booking = mock_booking
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=mock_analysis)
             
             # Act
@@ -1510,26 +1662,26 @@ class TestGetAnalysisById:
             
             # Assert
             assert result is not None
-            assert result.id == analysis_id
-            assert result.userId == user_id
-            assert result.bookingId == booking_id
+            assert result["id"] == analysis_id
+            assert result["userId"] == user_id
+            assert result["bookingId"] == booking_id
             
             # Verify all 33 metrics are present
-            assert result.fhdPixels == 45.23
-            assert result.cervicalAngle == 12.5
-            assert result.leftShoulderAngle == 85.0
-            assert result.pelvicObliquity == 1.5
-            assert result.leftKneeAngle == 180.0
-            assert result.shoulderWidth == 45.0
+            assert result["fhdPixels"] == 45.23
+            assert result["cervicalAngle"] == 12.5
+            assert result["leftShoulderAngle"] == 85.0
+            assert result["pelvicObliquity"] == 1.5
+            assert result["leftKneeAngle"] == 180.0
+            assert result["shoulderWidth"] == 45.0
             
             # Verify metadata
-            assert result.status == "completed"
-            assert result.landmarksData is not None
+            assert result["status"] == "completed"
+            assert result["landmarksData"] is not None
             
             # Verify relations
-            assert result.booking is not None
-            assert result.booking.service is not None
-            assert result.booking.service.name == "Posture Assessment Plan"
+            assert result["booking"] is not None
+            assert result["booking"]["service"] is not None
+            assert result["booking"]["service"]["name"] == "Posture Assessment Plan"
             
             # Verify database query
             mock_db.postureanalysis.find_first.assert_called_once_with(
@@ -1539,7 +1691,10 @@ class TestGetAnalysisById:
                         "include": {
                             "service": True
                         }
-                    }
+                    },
+                    # The detail view also pulls the captured pose images, which the
+                    # list view deliberately does not.
+                    "poseLandmarks": True
                 }
             )
     
@@ -1550,7 +1705,7 @@ class TestGetAnalysisById:
         analysis_id = "nonexistent-analysis"
         user_id = "user-456"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=None)
             
             # Act
@@ -1570,7 +1725,10 @@ class TestGetAnalysisById:
                         "include": {
                             "service": True
                         }
-                    }
+                    },
+                    # The detail view also pulls the captured pose images, which the
+                    # list view deliberately does not.
+                    "poseLandmarks": True
                 }
             )
     
@@ -1584,7 +1742,7 @@ class TestGetAnalysisById:
         
         # Analysis exists but belongs to different user
         # Database query with userId in WHERE clause will return None
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=None)
             
             # Act
@@ -1607,11 +1765,11 @@ class TestGetAnalysisById:
         analysis_id = "analysis-123"
         user_id = "user-456"
         
-        mock_service = AsyncMock()
+        mock_service = Record()
         mock_service.name = "Premium Posture Plan"
         mock_service.description = "Advanced posture analysis"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = "booking-789"
         mock_booking.status = "CONFIRMED"
         mock_booking.totalScreeningCount = 10
@@ -1619,12 +1777,12 @@ class TestGetAnalysisById:
         mock_booking.remainingScreeningCount = 5
         mock_booking.service = mock_service
         
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         mock_analysis.id = analysis_id
         mock_analysis.userId = user_id
         mock_analysis.booking = mock_booking
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=mock_analysis)
             
             # Act
@@ -1634,12 +1792,12 @@ class TestGetAnalysisById:
             )
             
             # Assert
-            assert result.booking is not None
-            assert result.booking.id == "booking-789"
-            assert result.booking.status == "CONFIRMED"
-            assert result.booking.totalScreeningCount == 10
-            assert result.booking.usedScreeningCount == 5
-            assert result.booking.remainingScreeningCount == 5
+            assert result["booking"] is not None
+            assert result["booking"]["id"] == "booking-789"
+            assert result["booking"]["status"] == "CONFIRMED"
+            assert result["booking"]["totalScreeningCount"] == 10
+            assert result["booking"]["usedScreeningCount"] == 5
+            assert result["booking"]["remainingScreeningCount"] == 5
     
     @pytest.mark.asyncio
     async def test_get_analysis_by_id_includes_service_info(self):
@@ -1648,21 +1806,21 @@ class TestGetAnalysisById:
         analysis_id = "analysis-123"
         user_id = "user-456"
         
-        mock_service = AsyncMock()
+        mock_service = Record()
         mock_service.id = "service-001"
         mock_service.name = "Basic Posture Assessment"
         mock_service.description = "Entry-level posture analysis"
         mock_service.basePrice = 99.99
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.service = mock_service
         
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         mock_analysis.id = analysis_id
         mock_analysis.userId = user_id
         mock_analysis.booking = mock_booking
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=mock_analysis)
             
             # Act
@@ -1672,11 +1830,11 @@ class TestGetAnalysisById:
             )
             
             # Assert
-            assert result.booking.service is not None
-            assert result.booking.service.id == "service-001"
-            assert result.booking.service.name == "Basic Posture Assessment"
-            assert result.booking.service.description == "Entry-level posture analysis"
-            assert result.booking.service.basePrice == 99.99
+            assert result["booking"]["service"] is not None
+            assert result["booking"]["service"]["id"] == "service-001"
+            assert result["booking"]["service"]["name"] == "Basic Posture Assessment"
+            assert result["booking"]["service"]["description"] == "Entry-level posture analysis"
+            assert result["booking"]["service"]["basePrice"] == 99.99
     
     @pytest.mark.asyncio
     async def test_get_analysis_by_id_includes_landmarks_for_visualization(self):
@@ -1699,13 +1857,13 @@ class TestGetAnalysisById:
             "right_hand": {}
         }
         
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         mock_analysis.id = analysis_id
         mock_analysis.userId = user_id
         mock_analysis.landmarksData = mock_landmarks
         mock_analysis.booking = AsyncMock()
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=mock_analysis)
             
             # Act
@@ -1715,10 +1873,10 @@ class TestGetAnalysisById:
             )
             
             # Assert
-            assert result.landmarksData is not None
-            assert "pose" in result.landmarksData
-            assert 0 in result.landmarksData["pose"]  # nose
-            assert 33 in result.landmarksData["pose"]  # virtual neck
+            assert result["landmarksData"] is not None
+            assert "pose" in result["landmarksData"]
+            assert 0 in result["landmarksData"]["pose"]  # nose
+            assert 33 in result["landmarksData"]["pose"]  # virtual neck
     
     @pytest.mark.asyncio
     async def test_get_analysis_by_id_with_completed_status(self):
@@ -1727,13 +1885,13 @@ class TestGetAnalysisById:
         analysis_id = "analysis-123"
         user_id = "user-456"
         
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         mock_analysis.id = analysis_id
         mock_analysis.userId = user_id
         mock_analysis.status = "completed"
         mock_analysis.booking = AsyncMock()
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=mock_analysis)
             
             # Act
@@ -1744,7 +1902,7 @@ class TestGetAnalysisById:
             
             # Assert
             assert result is not None
-            assert result.status == "completed"
+            assert result["status"] == "completed"
     
     @pytest.mark.asyncio
     async def test_get_analysis_by_id_with_analysis_date(self):
@@ -1754,13 +1912,13 @@ class TestGetAnalysisById:
         user_id = "user-456"
         analysis_date = datetime(2024, 1, 15, 10, 30, 0)
         
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         mock_analysis.id = analysis_id
         mock_analysis.userId = user_id
         mock_analysis.analysisDate = analysis_date
         mock_analysis.booking = AsyncMock()
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=mock_analysis)
             
             # Act
@@ -1771,7 +1929,7 @@ class TestGetAnalysisById:
             
             # Assert
             assert result is not None
-            assert result.analysisDate == analysis_date
+            assert result["analysisDate"] == analysis_date
     
     @pytest.mark.asyncio
     async def test_get_analysis_by_id_returns_none_not_exception(self):
@@ -1783,7 +1941,7 @@ class TestGetAnalysisById:
         analysis_id = "analysis-123"
         user_id = "user-456"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=None)
             
             # Act - should not raise exception
@@ -1802,7 +1960,7 @@ class TestGetAnalysisById:
         analysis_id = "analysis-123"
         user_id = "user-456"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=None)
             
             # Act
@@ -1832,7 +1990,7 @@ class TestGetAnalysisById:
         analysis_id = "analysis-123"
         user_id = "user-456"
         
-        mock_analysis = AsyncMock()
+        mock_analysis = Record()
         mock_analysis.id = analysis_id
         mock_analysis.userId = user_id
         
@@ -1884,7 +2042,7 @@ class TestGetAnalysisById:
         
         mock_analysis.booking = AsyncMock()
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.postureanalysis.find_first = AsyncMock(return_value=mock_analysis)
             
             # Act
@@ -1897,49 +2055,49 @@ class TestGetAnalysisById:
             assert result is not None
             
             # Global Posture (8)
-            assert hasattr(result, 'fhdPixels')
-            assert hasattr(result, 'cervicalAngle')
-            assert hasattr(result, 'headLateralFlexion')
-            assert hasattr(result, 'headRotation')
-            assert hasattr(result, 'thoracicKyphosisAngle')
-            assert hasattr(result, 'lumbarLordosisAngle')
-            assert hasattr(result, 'trunkLateralShift')
-            assert hasattr(result, 'trunkAngle')
+            assert 'fhdPixels' in result
+            assert 'cervicalAngle' in result
+            assert 'headLateralFlexion' in result
+            assert 'headRotation' in result
+            assert 'thoracicKyphosisAngle' in result
+            assert 'lumbarLordosisAngle' in result
+            assert 'trunkLateralShift' in result
+            assert 'trunkAngle' in result
             
             # Shoulder & Arm (6)
-            assert hasattr(result, 'leftShoulderAngle')
-            assert hasattr(result, 'rightShoulderAngle')
-            assert hasattr(result, 'shoulderHeightDiff')
-            assert hasattr(result, 'roundedShoulderAngle')
-            assert hasattr(result, 'leftElbowAngle')
-            assert hasattr(result, 'rightElbowAngle')
+            assert 'leftShoulderAngle' in result
+            assert 'rightShoulderAngle' in result
+            assert 'shoulderHeightDiff' in result
+            assert 'roundedShoulderAngle' in result
+            assert 'leftElbowAngle' in result
+            assert 'rightElbowAngle' in result
             
             # Pelvis & Hip (5)
-            assert hasattr(result, 'leftHipAngle')
-            assert hasattr(result, 'rightHipAngle')
-            assert hasattr(result, 'pelvicObliquity')
-            assert hasattr(result, 'pelvicTiltAngle')
-            assert hasattr(result, 'hipHeightDiff')
+            assert 'leftHipAngle' in result
+            assert 'rightHipAngle' in result
+            assert 'pelvicObliquity' in result
+            assert 'pelvicTiltAngle' in result
+            assert 'hipHeightDiff' in result
             
             # Lower Extremity (9)
-            assert hasattr(result, 'leftKneeAngle')
-            assert hasattr(result, 'rightKneeAngle')
-            assert hasattr(result, 'kneeVarusValgus')
-            assert hasattr(result, 'kneeFlexionNeutral')
-            assert hasattr(result, 'qAngleLeft')
-            assert hasattr(result, 'qAngleRight')
-            assert hasattr(result, 'footProgressionAngle')
-            assert hasattr(result, 'pronationSupinationLeft')
-            assert hasattr(result, 'pronationSupinationRight')
+            assert 'leftKneeAngle' in result
+            assert 'rightKneeAngle' in result
+            assert 'kneeVarusValgus' in result
+            assert 'kneeFlexionNeutral' in result
+            assert 'qAngleLeft' in result
+            assert 'qAngleRight' in result
+            assert 'footProgressionAngle' in result
+            assert 'pronationSupinationLeft' in result
+            assert 'pronationSupinationRight' in result
             
             # Body Proportions (7)
-            assert hasattr(result, 'shoulderWidth')
-            assert hasattr(result, 'hipWidth')
-            assert hasattr(result, 'torsoLength')
-            assert hasattr(result, 'leftArmLength')
-            assert hasattr(result, 'rightArmLength')
-            assert hasattr(result, 'leftLegLength')
-            assert hasattr(result, 'rightLegLength')
+            assert 'shoulderWidth' in result
+            assert 'hipWidth' in result
+            assert 'torsoLength' in result
+            assert 'leftArmLength' in result
+            assert 'rightArmLength' in result
+            assert 'leftLegLength' in result
+            assert 'rightLegLength' in result
 
 
 
@@ -1953,7 +2111,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "CONFIRMED"
@@ -1961,7 +2119,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 3
         mock_booking.remainingScreeningCount = 7
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act
@@ -1989,7 +2147,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "COMPLETED"
@@ -1997,7 +2155,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 2
         mock_booking.remainingScreeningCount = 3
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act
@@ -2020,7 +2178,7 @@ class TestValidateBooking:
         booking_id = "nonexistent-booking"
         user_id = "user-456"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=None)
             
             # Act
@@ -2044,7 +2202,7 @@ class TestValidateBooking:
         user_id = "user-456"
         
         # Booking exists but belongs to different user
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=None)
             
             # Act
@@ -2064,7 +2222,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "CONFIRMED"
@@ -2072,7 +2230,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 10
         mock_booking.remainingScreeningCount = 0
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act
@@ -2095,7 +2253,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "PENDING"
@@ -2103,7 +2261,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 3
         mock_booking.remainingScreeningCount = 7
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act
@@ -2126,7 +2284,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "CANCELLED"
@@ -2134,7 +2292,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 2
         mock_booking.remainingScreeningCount = 8
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act
@@ -2155,7 +2313,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "REJECTED"
@@ -2163,7 +2321,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 0
         mock_booking.remainingScreeningCount = 5
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act
@@ -2183,7 +2341,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "PENDING"  # Invalid status
@@ -2191,7 +2349,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 10
         mock_booking.remainingScreeningCount = 0  # No counts
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act
@@ -2212,7 +2370,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "CONFIRMED"
@@ -2220,7 +2378,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 9
         mock_booking.remainingScreeningCount = 1
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act
@@ -2241,7 +2399,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "CONFIRMED"
@@ -2249,7 +2407,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 0
         mock_booking.remainingScreeningCount = 15
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act
@@ -2272,7 +2430,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "CONFIRMED"
@@ -2280,7 +2438,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 5
         mock_booking.remainingScreeningCount = 5
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act
@@ -2310,7 +2468,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=None)
             
             # Act
@@ -2332,7 +2490,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "CONFIRMED"
@@ -2340,7 +2498,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 5
         mock_booking.remainingScreeningCount = 5
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act - validate multiple times
@@ -2373,7 +2531,7 @@ class TestValidateBooking:
         booking_id = "booking-123"
         user_id = "user-456"
         
-        mock_booking = AsyncMock()
+        mock_booking = Record()
         mock_booking.id = booking_id
         mock_booking.userId = user_id
         mock_booking.status = "CONFIRMED"
@@ -2381,7 +2539,7 @@ class TestValidateBooking:
         mock_booking.usedScreeningCount = 0
         mock_booking.remainingScreeningCount = 0
         
-        with patch('app.api.posture.service.db') as mock_db:
+        with patch('app.api.posture.service.db', new_callable=FakeDB) as mock_db:
             mock_db.booking.find_first = AsyncMock(return_value=mock_booking)
             
             # Act

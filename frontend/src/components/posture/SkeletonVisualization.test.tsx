@@ -25,6 +25,11 @@ describe('SkeletonVisualization', () => {
     strokeStyle: '',
     lineWidth: 0,
     lineCap: '',
+    // Every lineWidth the component assigns, in order. The canvas is stateful: the
+    // connections are stroked at 3 and the landmark dots' outline is then set to 1.5,
+    // so reading the property after render only ever shows the LAST value and says
+    // nothing about how the connections were drawn.
+    lineWidths: [] as number[],
     globalAlpha: 1,
     font: '',
     textAlign: '',
@@ -32,7 +37,17 @@ describe('SkeletonVisualization', () => {
   
   beforeEach(() => {
     // Mock canvas getContext
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => mockContext as any);
+    mockContext.lineWidths = [];
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => {
+      const recorded: number[] = mockContext.lineWidths;
+      return new Proxy(mockContext, {
+        set(target, prop, value) {
+          if (prop === 'lineWidth') recorded.push(value);
+          (target as any)[prop] = value;
+          return true;
+        },
+      }) as any;
+    });
     vi.clearAllMocks();
   });
   
@@ -226,8 +241,11 @@ describe('SkeletonVisualization', () => {
     
     it('should set line properties for connections', () => {
       render(<SkeletonVisualization analysis={mockAnalysisWithLandmarks} />);
-      
-      expect(mockContext.lineWidth).toBe(3);
+
+      // The connections are stroked at 3; the landmark outlines are stroked at 1.5
+      // afterwards, so the property's FINAL value is 1.5 and asserting on it was
+      // reading the wrong moment.
+      expect(mockContext.lineWidths).toContain(3);
       expect(mockContext.lineCap).toBe('round');
     });
   });

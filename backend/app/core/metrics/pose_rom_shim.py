@@ -39,6 +39,10 @@ MOVEMENTS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
     "rom_hip_flexion_right": ("hip_flexion_right", SAGITTAL),
     "rom_knee_flexion_left": ("knee_flexion_left", SAGITTAL),
     "rom_knee_flexion_right": ("knee_flexion_right", SAGITTAL),
+    # The skeleton's head_tilt IS cervical lateral flexion: it rotates the ear bar about
+    # the trunk axis, which is the movement. The name differs because the posture
+    # registry got there first and called the resting version a tilt.
+    "rom_cervical_lateral_flexion": ("head_tilt", FRONTAL),
 }
 
 # End-range spans a real patient reaches. Drawn from, not fixed at, the normal range -
@@ -55,6 +59,9 @@ DRAW_RANGE: Dict[str, Tuple[float, float]] = {
     "hip_flexion_right": (30.0, 110.0),
     "knee_flexion_left": (20.0, 140.0),
     "knee_flexion_right": (20.0, 140.0),
+    # Signed, so both directions must be drawn: a metric that only ever sees a rightward
+    # bend would certify while reporting the wrong sign for every leftward one.
+    "head_tilt": (-48.0, 48.0),
 }
 
 

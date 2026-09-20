@@ -353,51 +353,47 @@ describe('CheckoutPage - Date/Time Selection Step', () => {
     fireEvent.click(continueButton);
 
     await waitFor(() => {
-      expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
+      expect(screen.getByText('Select Date')).toBeInTheDocument();
     });
   });
 
-  it('should display calendar and time input in date/time step', async () => {
+  it('should display the calendar and the slot picker in the date/time step', async () => {
     renderCheckoutPage();
 
-    // Navigate to date/time step
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
       expect(screen.getByText('Select Date')).toBeInTheDocument();
-      expect(screen.getByText('Select Time')).toBeInTheDocument();
-      expect(screen.getByLabelText('Time')).toBeInTheDocument();
+      expect(screen.getByText('Select Time Slot')).toBeInTheDocument();
     });
   });
 
-  it('should allow selecting a time', async () => {
+  it('asks for a date before offering any time', async () => {
+    // The free-text time input these tests drove is gone. Times are now SLOTS fetched
+    // for a chosen date, so there is nothing to type into and no slot to pick until a
+    // date exists - which is the point: a patient can no longer enter a time the
+    // clinic has not offered.
     renderCheckoutPage();
 
-    // Navigate to date/time step
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      const timeInput = screen.getByLabelText('Time') as HTMLInputElement;
-      fireEvent.change(timeInput, { target: { value: '14:30' } });
-      expect(timeInput.value).toBe('14:30');
+      expect(screen.getByText('Please select a date first')).toBeInTheDocument();
     });
+    expect(screen.queryByLabelText('Time')).not.toBeInTheDocument();
   });
 
-  it('should display selected date and time when both are chosen', async () => {
+  it('keeps the booking action unavailable until a slot is chosen', async () => {
     renderCheckoutPage();
 
-    // Navigate to date/time step
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      // Select time
-      const timeInput = screen.getByLabelText('Time');
-      fireEvent.change(timeInput, { target: { value: '14:30' } });
-
-      // Note: Calendar date selection is complex to test with react-day-picker
-      // We're testing that the time input works and the UI renders correctly
-      expect(timeInput).toHaveValue('14:30');
+      expect(screen.getByText('Select Time Slot')).toBeInTheDocument();
     });
+    // No date, so no slots, so nothing to confirm.
+    // The step cannot be completed, so its continue action stays disabled.
+    expect(screen.getByText('Continue to Payment')).toBeDisabled();
   });
 
   it('should have back button to return to cart', async () => {
@@ -495,7 +491,7 @@ describe('CheckoutPage - Progress Indicator', () => {
     renderCheckoutPage();
 
     const cartReviewLabel = screen.getByText('Cart Review');
-    expect(cartReviewLabel).toHaveClass('text-purple-600');
+    expect(cartReviewLabel).toHaveClass('text-[#2F86C7]');
   });
 
   it('should update progress indicator when navigating to date/time step', async () => {
@@ -506,7 +502,7 @@ describe('CheckoutPage - Progress Indicator', () => {
 
     await waitFor(() => {
       const dateTimeLabel = screen.getByText('Date & Time');
-      expect(dateTimeLabel).toHaveClass('text-purple-600');
+      expect(dateTimeLabel).toHaveClass('text-[#2F86C7]');
     });
   });
 
@@ -518,7 +514,7 @@ describe('CheckoutPage - Progress Indicator', () => {
 
     await waitFor(() => {
       const cartReviewLabel = screen.getByText('Cart Review');
-      expect(cartReviewLabel).toHaveClass('text-green-600');
+      expect(cartReviewLabel).toHaveClass('text-emerald-400');
     });
   });
 
@@ -625,17 +621,13 @@ describe('CheckoutPage - Payment Step', () => {
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
+      expect(screen.getByText('Select Date')).toBeInTheDocument();
     });
 
-    // Select time (date selection is complex with calendar component)
-    const timeInput = screen.getByLabelText('Time');
-    fireEvent.change(timeInput, { target: { value: '14:30' } });
-
-    // Manually set the date state by clicking continue (will show error if date not set)
-    // For testing, we'll need to mock the date selection
-    // Since we can't easily interact with the calendar, we'll test the payment step
-    // by checking if it renders when we navigate to it programmatically
+    // This helper does NOT reach the payment step, and never did - its own comments
+    // said so. Reaching it needs a date picked from the calendar and a slot returned
+    // by the server, neither of which is stubbed here. It leaves the page on the
+    // date/time step, which is what the tests below actually assert against.
   };
 
   it('should display order summary in payment step', async () => {
@@ -656,7 +648,7 @@ describe('CheckoutPage - Payment Step', () => {
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
+      expect(screen.getByText('Select Date')).toBeInTheDocument();
     });
 
     // Check that items are still accessible in the component
@@ -831,7 +823,7 @@ describe('CheckoutPage - Navigation Between Steps', () => {
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
+      expect(screen.getByText('Select Date')).toBeInTheDocument();
     });
   });
 
@@ -842,7 +834,7 @@ describe('CheckoutPage - Navigation Between Steps', () => {
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
+      expect(screen.getByText('Select Date')).toBeInTheDocument();
     });
 
     // Navigate backward
@@ -882,14 +874,13 @@ describe('CheckoutPage - Navigation Between Steps', () => {
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      const timeInput = screen.getByLabelText('Time');
-      fireEvent.change(timeInput, { target: { value: '14:30' } });
+      expect(screen.getByText('Select Time Slot')).toBeInTheDocument();
     });
 
-    // Note: Without being able to easily select a date in the calendar,
-    // the button will remain disabled. This test documents the expected behavior.
+    // Neither a date nor a slot has been chosen, so the step cannot be completed.
+    // There is no longer a free-text time to fill in as a shortcut.
     const continueButton = screen.getByText('Continue to Payment');
-    expect(continueButton).toBeDisabled(); // Still disabled without date
+    expect(continueButton).toBeDisabled();
   });
 
   it('should not have back button on cart step', () => {
@@ -919,7 +910,7 @@ describe('CheckoutPage - Navigation Between Steps', () => {
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
+      expect(screen.getByText('Select Date')).toBeInTheDocument();
     });
 
     // Navigate back to cart
@@ -939,13 +930,16 @@ describe('CheckoutPage - Navigation Between Steps', () => {
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      const timeInput = screen.getByLabelText('Time') as HTMLInputElement;
-      fireEvent.change(timeInput, { target: { value: '14:30' } });
-      expect(timeInput.value).toBe('14:30');
+      expect(screen.getByText('Select Time Slot')).toBeInTheDocument();
     });
 
-    // Note: We can't easily navigate to payment without date selection
-    // This test documents that time is preserved in state
+    // Going back and forward must not lose the step's state. With slots there is no
+    // typed value to preserve, so what is asserted is that the step still renders
+    // after a round trip rather than collapsing to the empty cart.
+    fireEvent.click(screen.getByText(/Back to/));
+    await waitFor(() => {
+      expect(screen.getByText('Continue to Date & Time')).toBeInTheDocument();
+    });
   });
 
   it('should update progress indicator when navigating forward', async () => {
@@ -953,14 +947,14 @@ describe('CheckoutPage - Navigation Between Steps', () => {
 
     // Cart step should be active
     const cartLabel = screen.getByText('Cart Review');
-    expect(cartLabel).toHaveClass('text-purple-600');
+    expect(cartLabel).toHaveClass('text-[#2F86C7]');
 
     // Navigate to date/time
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
       const dateTimeLabel = screen.getByText('Date & Time');
-      expect(dateTimeLabel).toHaveClass('text-purple-600');
+      expect(dateTimeLabel).toHaveClass('text-[#2F86C7]');
     });
   });
 
@@ -972,7 +966,7 @@ describe('CheckoutPage - Navigation Between Steps', () => {
 
     await waitFor(() => {
       const cartLabel = screen.getByText('Cart Review');
-      expect(cartLabel).toHaveClass('text-green-600');
+      expect(cartLabel).toHaveClass('text-emerald-400');
     });
   });
 
@@ -983,7 +977,7 @@ describe('CheckoutPage - Navigation Between Steps', () => {
     fireEvent.click(screen.getByText('Continue to Date & Time'));
 
     await waitFor(() => {
-      expect(screen.getByText('Select Date & Time')).toBeInTheDocument();
+      expect(screen.getByText('Select Date')).toBeInTheDocument();
     });
 
     // Navigate backward
@@ -992,7 +986,7 @@ describe('CheckoutPage - Navigation Between Steps', () => {
     await waitFor(() => {
       // Cart should be active again
       const cartLabel = screen.getByText('Cart Review');
-      expect(cartLabel).toHaveClass('text-purple-600');
+      expect(cartLabel).toHaveClass('text-[#2F86C7]');
     });
   });
 });

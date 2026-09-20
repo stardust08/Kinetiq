@@ -62,6 +62,12 @@ class TestCalculateCartValue:
         assert result == 249.49
 
 
+
+def _json_value(value):
+    """Unwrap prisma's Json marker, which wraps every JSON column on write."""
+    return getattr(value, "data", value)
+
+
 @pytest.fixture
 def mock_db(monkeypatch):
     """Mock database client."""
@@ -141,13 +147,14 @@ class TestGetOrCreateCart:
         assert result.items == []
         assert result.cartValue == 0
         mock_db.cart.find_first.assert_called_once_with(where={"userId": "user-1"})
-        mock_db.cart.create.assert_called_once_with(
-            data={
-                "userId": "user-1",
-                "items": [],
-                "cartValue": 0
-            }
-        )
+        mock_db.cart.create.assert_called_once()
+        created = mock_db.cart.create.call_args[1]["data"]
+        # The relation is CONNECTED rather than written as a flat foreign key, and the
+        # JSON column is wrapped in prisma's Json marker - neither of which the old
+        # exact-match assertion could express.
+        assert created["user"] == {"connect": {"id": "user-1"}}
+        assert created["cartValue"] == 0
+        assert _json_value(created["items"]) == []
     
     async def test_get_cart_with_items(self, mock_db, sample_cart_with_items):
         """Test getting a cart that already has items."""
@@ -588,10 +595,11 @@ class TestClearCart:
         
         assert result.cartValue == 0
         assert len(result.items) == 0
-        mock_db.cart.update.assert_called_once_with(
-            where={"id": "cart-1"},
-            data={"items": [], "cartValue": 0}
-        )
+        mock_db.cart.update.assert_called_once()
+        assert mock_db.cart.update.call_args[1]["where"] == {"id": "cart-1"}
+        updated = mock_db.cart.update.call_args[1]["data"]
+        assert updated["cartValue"] == 0
+        assert _json_value(updated["items"]) == []
     
     async def test_clear_empty_cart(self, mock_db, sample_cart):
         """Test clearing an already empty cart."""
@@ -608,10 +616,11 @@ class TestClearCart:
         
         assert result.cartValue == 0
         assert len(result.items) == 0
-        mock_db.cart.update.assert_called_once_with(
-            where={"id": "cart-1"},
-            data={"items": [], "cartValue": 0}
-        )
+        mock_db.cart.update.assert_called_once()
+        assert mock_db.cart.update.call_args[1]["where"] == {"id": "cart-1"}
+        updated = mock_db.cart.update.call_args[1]["data"]
+        assert updated["cartValue"] == 0
+        assert _json_value(updated["items"]) == []
     
     async def test_clear_cart_with_multiple_items(self, mock_db):
         """Test clearing a cart with multiple items."""
@@ -651,10 +660,11 @@ class TestClearCart:
         
         assert result.cartValue == 0
         assert len(result.items) == 0
-        mock_db.cart.update.assert_called_once_with(
-            where={"id": "cart-1"},
-            data={"items": [], "cartValue": 0}
-        )
+        mock_db.cart.update.assert_called_once()
+        assert mock_db.cart.update.call_args[1]["where"] == {"id": "cart-1"}
+        updated = mock_db.cart.update.call_args[1]["data"]
+        assert updated["cartValue"] == 0
+        assert _json_value(updated["items"]) == []
     
     async def test_clear_cart_creates_cart_if_not_exists(self, mock_db, sample_cart):
         """Test clearing cart creates a new cart if user doesn't have one."""
@@ -672,11 +682,12 @@ class TestClearCart:
         
         assert result.cartValue == 0
         assert len(result.items) == 0
-        mock_db.cart.create.assert_called_once_with(
-            data={
-                "userId": "user-1",
-                "items": [],
-                "cartValue": 0
-            }
-        )
+        mock_db.cart.create.assert_called_once()
+        created = mock_db.cart.create.call_args[1]["data"]
+        # The relation is CONNECTED rather than written as a flat foreign key, and the
+        # JSON column is wrapped in prisma's Json marker - neither of which the old
+        # exact-match assertion could express.
+        assert created["user"] == {"connect": {"id": "user-1"}}
+        assert created["cartValue"] == 0
+        assert _json_value(created["items"]) == []
         mock_db.cart.update.assert_called_once()

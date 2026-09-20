@@ -1,4 +1,5 @@
 import { Booking } from '../../types';
+import { isScreenable, screenableBookings } from '../../lib/screenableBooking';
 import { Card, CardContent } from '../../app/components/ui/card';
 import { Button } from '../../app/components/ui/button';
 import { Badge } from '../../app/components/ui/badge';
@@ -19,9 +20,9 @@ export default function BookingSelector({
   disabled = false,
 }: BookingSelectorProps) {
   // Filter bookings with remaining counts > 0
-  const validBookings = bookings.filter(
-    (booking) => booking.remainingScreeningCount > 0
-  );
+  // Screenings remaining is not enough: the backend also refuses a cancelled
+  // booking, so offering one here only produces a failure at start.
+  const validBookings = screenableBookings(bookings);
 
   // No valid bookings state
   if (validBookings.length === 0) {

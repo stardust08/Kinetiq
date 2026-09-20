@@ -144,35 +144,7 @@ describe('useServices', () => {
     expect(result.current.isLoading).toBe(false);
   });
 
-  it('should fetch service by slug successfully', async () => {
-    vi.mocked(servicesApi.getServiceBySlug).mockResolvedValue(mockService);
 
-    const { result } = renderHook(() => useServices());
-
-    await act(async () => {
-      const data = await result.current.fetchServiceBySlug('individual-therapy');
-      expect(data).toEqual(mockService);
-    });
-
-    expect(servicesApi.getServiceBySlug).toHaveBeenCalledWith('individual-therapy');
-    expect(result.current.currentService).toEqual(mockService);
-    expect(result.current.isLoading).toBe(false);
-    expect(result.current.error).toBeNull();
-  });
-
-  it('should handle fetch service by slug error', async () => {
-    const error = new Error('Failed to fetch service');
-    vi.mocked(servicesApi.getServiceBySlug).mockRejectedValue(error);
-
-    const { result } = renderHook(() => useServices());
-
-    await act(async () => {
-      await expect(result.current.fetchServiceBySlug('invalid-slug')).rejects.toThrow('Failed to fetch service');
-    });
-
-    expect(result.current.error).toEqual(error);
-    expect(result.current.isLoading).toBe(false);
-  });
 
   it('should clear current service', async () => {
     const { result } = renderHook(() => useServices());

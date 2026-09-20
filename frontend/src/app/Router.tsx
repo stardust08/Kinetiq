@@ -9,6 +9,7 @@ import AssessmentHistoryPage from '../pages/AssessmentHistoryPage';
 import AssessmentDetailPage from '../pages/AssessmentDetailPage';
 import BookingAssessmentsPage from '../pages/BookingAssessmentsPage';
 import NotFoundPage from '../pages/NotFoundPage';
+import ROMAnalysisPage from '../pages/ROMAnalysisPage';
 import GaitAnalysisPage from '../pages/GaitAnalysisPage';
 
 /**
@@ -93,6 +94,15 @@ export function AppRouter() {
           element={
             <ProtectedRoute>
               <GaitAnalysisPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/rom-analysis"
+          element={
+            <ProtectedRoute>
+              <ROMAnalysisPage />
             </ProtectedRoute>
           }
         />

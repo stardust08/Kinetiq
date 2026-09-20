@@ -254,7 +254,7 @@ describe('BookingList', () => {
       expect(screen.getByText('Test Service')).toBeInTheDocument();
     });
 
-    const viewDetailsButtons = screen.getAllByRole('button', { name: /view details/i });
+    const viewDetailsButtons = screen.getAllByRole('button', { name: /^details$/i });
     await user.click(viewDetailsButtons[0]);
 
     expect(onViewDetails).toHaveBeenCalledWith(mockBookings[0]);

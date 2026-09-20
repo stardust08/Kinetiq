@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { renderWithProviders } from '../../test/renderWithProviders';
 import userEvent from '@testing-library/user-event';
 import { CartDrawer } from './CartDrawer';
 import { useCartStore } from '../../store/cartStore';
 import { cartAPI } from '../../api/cart';
 import { toast } from 'sonner';
-import { BrowserRouter } from 'react-router-dom';
 
 vi.mock('../../api/cart');
 vi.mock('sonner');
@@ -35,7 +35,7 @@ describe('CartDrawer', () => {
   });
 
   it('should render empty cart message when cart is empty', () => {
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     expect(screen.getByText('Your cart is empty')).toBeInTheDocument();
   });
@@ -56,7 +56,7 @@ describe('CartDrawer', () => {
       itemCount: 1,
     });
 
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     expect(screen.getByText('Test Service')).toBeInTheDocument();
     expect(screen.getByText('₹50.00')).toBeInTheDocument();
@@ -80,7 +80,7 @@ describe('CartDrawer', () => {
       itemCount: 1,
     });
 
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     // Verify service name
     expect(screen.getByText('Therapy Session')).toBeInTheDocument();
@@ -115,7 +115,7 @@ describe('CartDrawer', () => {
       itemCount: 2,
     });
 
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     // Total appears in both subtotal and total rows
     expect(screen.getAllByText('₹125.00').length).toBeGreaterThanOrEqual(1);
@@ -137,7 +137,7 @@ describe('CartDrawer', () => {
       itemCount: 1,
     });
 
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     // Verify "Total" label is present
     expect(screen.getByText('Total')).toBeInTheDocument();
@@ -147,7 +147,7 @@ describe('CartDrawer', () => {
   });
 
   it('should display zero total when cart is empty', () => {
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     expect(screen.getByText('Total')).toBeInTheDocument();
     // Zero appears in both subtotal and total rows
@@ -185,7 +185,7 @@ describe('CartDrawer', () => {
       syncWithServer: mockSyncWithServer,
     });
 
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     const removeButton = screen.getByRole('button', { name: /remove/i });
     await user.click(removeButton);
@@ -193,7 +193,9 @@ describe('CartDrawer', () => {
     await waitFor(() => {
       expect(cartAPI.removeItem).toHaveBeenCalledWith('item-1');
       expect(mockSyncWithServer).toHaveBeenCalledWith(mockUpdatedCart);
-      expect(toast.success).toHaveBeenCalledWith('Item removed from cart');
+      expect(toast.success).toHaveBeenCalledWith('Item removed from cart', {
+        closeButton: true,
+      });
     });
   });
 
@@ -218,7 +220,7 @@ describe('CartDrawer', () => {
       itemCount: 1,
     });
 
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     const removeButton = screen.getByRole('button', { name: /remove/i });
     await user.click(removeButton);
@@ -232,7 +234,7 @@ describe('CartDrawer', () => {
   });
 
   it('should disable checkout button when cart is empty', () => {
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     const checkoutButton = screen.getByRole('button', {
       name: /proceed to checkout/i,
@@ -256,7 +258,7 @@ describe('CartDrawer', () => {
       itemCount: 1,
     });
 
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     const checkoutButton = screen.getByRole('button', {
       name: /proceed to checkout/i,
@@ -282,7 +284,7 @@ describe('CartDrawer', () => {
       itemCount: 1,
     });
 
-    render(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
+    renderWithProviders(<CartDrawer open={true} onOpenChange={mockOnOpenChange} />);
 
     const checkoutButton = screen.getByRole('button', {
       name: /proceed to checkout/i,

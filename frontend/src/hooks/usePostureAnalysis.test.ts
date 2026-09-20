@@ -127,8 +127,13 @@ describe('usePostureAnalysis', () => {
         wrapper: createQueryWrapper(),
       });
 
+      // startAnalysis records the error in state AND rethrows, so the caller can
+      // react. Awaiting it bare therefore rejects and fails the test before the
+      // assertions run - the caller has to catch, and so does this.
       await act(async () => {
-        await result.current.startAnalysis('booking-456');
+        await expect(result.current.startAnalysis('booking-456')).rejects.toThrow(
+          'Network error',
+        );
       });
 
       await waitFor(() => {
@@ -139,172 +144,6 @@ describe('usePostureAnalysis', () => {
     });
   });
 
-  describe('processFrame', () => {
-    it('should process frames and update progress', async () => {
-      const mockValidation = {
-        valid: true,
-        remainingCount: 5,
-        totalCount: 10,
-        usedCount: 5,
-      };
-
-      const mockStartResponse = {
-        sessionId: 'session-123',
-        bookingId: 'booking-456',
-        remainingCount: 5,
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      };
-
-      const mockFrameResponse = {
-        landmarks: { pose: { 0: [100, 200, 0, 0.95] } },
-        visibility: 0.95,
-        progress: 0.002,
-        message: 'Frame processed',
-      };
-
-      vi.mocked(postureApi.validateBooking).mockResolvedValue(mockValidation);
-      vi.mocked(postureApi.startAnalysis).mockResolvedValue(mockStartResponse);
-      vi.mocked(postureApi.processFrame).mockResolvedValue(mockFrameResponse);
-
-      const { result } = renderHook(() => usePostureAnalysis(), {
-        wrapper: createQueryWrapper(),
-      });
-
-      // Start analysis first
-      await act(async () => {
-        await result.current.startAnalysis('booking-456');
-      });
-
-      await waitFor(() => {
-        expect(result.current.step).toBe('capturing');
-      });
-
-      // Now process a frame
-      await act(async () => {
-        await result.current.processFrame('base64-frame-data', 0);
-      });
-
-      await waitFor(() => {
-        expect(result.current.frameCount).toBe(1);
-      });
-
-      expect(result.current.progress).toBeGreaterThan(0);
-      expect(postureApi.processFrame).toHaveBeenCalled();
-      const callArgs = vi.mocked(postureApi.processFrame).mock.calls[0];
-      expect(callArgs[0]).toMatchObject({
-        sessionId: 'session-123',
-        frameData: 'base64-frame-data',
-        frameNumber: 0,
-      });
-    });
-
-    it('should auto-transition to processing after 450 frames', async () => {
-      const mockValidation = {
-        valid: true,
-        remainingCount: 5,
-        totalCount: 10,
-        usedCount: 5,
-      };
-
-      const mockStartResponse = {
-        sessionId: 'session-123',
-        bookingId: 'booking-456',
-        remainingCount: 5,
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      };
-
-      const mockFrameResponse = {
-        landmarks: { pose: {} },
-        visibility: 0.95,
-        progress: 1.0,
-      };
-
-      vi.mocked(postureApi.validateBooking).mockResolvedValue(mockValidation);
-      vi.mocked(postureApi.startAnalysis).mockResolvedValue(mockStartResponse);
-      vi.mocked(postureApi.processFrame).mockResolvedValue(mockFrameResponse);
-
-      const { result } = renderHook(() => usePostureAnalysis(), {
-        wrapper: createQueryWrapper(),
-      });
-
-      // Start analysis
-      await act(async () => {
-        await result.current.startAnalysis('booking-456');
-      });
-
-      await waitFor(() => {
-        expect(result.current.step).toBe('capturing');
-      });
-
-      // Process frame 449 (450th frame, 0-indexed)
-      await act(async () => {
-        await result.current.processFrame('base64-frame-data', 449);
-      });
-
-      await waitFor(() => {
-        expect(result.current.step).toBe('processing');
-      });
-
-      expect(result.current.frameCount).toBe(450);
-      expect(result.current.progress).toBe(1.0);
-    });
-
-    it('should handle frame processing errors gracefully', async () => {
-      const mockValidation = {
-        valid: true,
-        remainingCount: 5,
-        totalCount: 10,
-        usedCount: 5,
-      };
-
-      const mockStartResponse = {
-        sessionId: 'session-123',
-        bookingId: 'booking-456',
-        remainingCount: 5,
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      };
-
-      vi.mocked(postureApi.validateBooking).mockResolvedValue(mockValidation);
-      vi.mocked(postureApi.startAnalysis).mockResolvedValue(mockStartResponse);
-      vi.mocked(postureApi.processFrame).mockRejectedValue(
-        new Error('Frame processing failed')
-      );
-
-      const { result } = renderHook(() => usePostureAnalysis(), {
-        wrapper: createQueryWrapper(),
-      });
-
-      // Start analysis
-      await act(async () => {
-        await result.current.startAnalysis('booking-456');
-      });
-
-      await waitFor(() => {
-        expect(result.current.step).toBe('capturing');
-      });
-
-      // Should not throw or change to error state
-      await act(async () => {
-        await result.current.processFrame('base64-frame-data', 0);
-      });
-
-      // Should still be in capturing state (errors are logged but don't fail analysis)
-      expect(result.current.step).toBe('capturing');
-    });
-
-    it('should not process frame without active session', async () => {
-      const { result } = renderHook(() => usePostureAnalysis(), {
-        wrapper: createQueryWrapper(),
-      });
-
-      await act(async () => {
-        await result.current.processFrame('base64-frame-data', 0);
-      });
-
-      // Should not call API without session
-      expect(postureApi.processFrame).not.toHaveBeenCalled();
-    });
-  });
 
   describe('finalizeAnalysis', () => {
     it('should finalize analysis successfully', async () => {
@@ -341,7 +180,6 @@ describe('usePostureAnalysis', () => {
 
       vi.mocked(postureApi.validateBooking).mockResolvedValue(mockValidation);
       vi.mocked(postureApi.startAnalysis).mockResolvedValue(mockStartResponse);
-      vi.mocked(postureApi.processFrame).mockResolvedValue(mockFrameResponse);
       vi.mocked(postureApi.finalizeAnalysis).mockResolvedValue(
         mockAnalysisResult
       );
@@ -359,21 +197,18 @@ describe('usePostureAnalysis', () => {
         expect(result.current.step).toBe('capturing');
       });
 
-      // Process 450 frames
-      for (let i = 0; i < 450; i++) {
-        await act(async () => {
-          await result.current.processFrame('base64-data', i);
-        });
-      }
+      // No per-frame round trip any more: pose estimation runs in the browser
+      // and the landmarks are posted once, by finalizeAnalysis.
 
-      await waitFor(() => {
-        expect(result.current.frameCount).toBe(450);
-      });
 
       // Finalize
       let finalResult: any;
       await act(async () => {
-        finalResult = await result.current.finalizeAnalysis();
+        finalResult = await result.current.finalizeAnalysis(
+            'session-123',
+            'booking-456',
+            { samples: [] },
+          );
       });
 
       await waitFor(() => {
@@ -389,7 +224,6 @@ describe('usePostureAnalysis', () => {
         bookingId: 'booking-456',
         landmarksData: expect.objectContaining({
           samples: expect.any(Array),
-          frameCount: 450,
         }),
       });
     });
@@ -399,10 +233,12 @@ describe('usePostureAnalysis', () => {
         wrapper: createQueryWrapper(),
       });
 
-      // Try to finalize without starting analysis
+      // Finalising without a session. The guard is `!sessionId || !bookingId`, so
+      // handing it a real session id - which an earlier edit did - meant the branch
+      // under test was never reached.
       let finalResult: any;
       await act(async () => {
-        finalResult = await result.current.finalizeAnalysis();
+        finalResult = await result.current.finalizeAnalysis('', '', { samples: [] });
       });
 
       expect(result.current.step).toBe('error');
@@ -433,7 +269,6 @@ describe('usePostureAnalysis', () => {
 
       vi.mocked(postureApi.validateBooking).mockResolvedValue(mockValidation);
       vi.mocked(postureApi.startAnalysis).mockResolvedValue(mockStartResponse);
-      vi.mocked(postureApi.processFrame).mockResolvedValue(mockFrameResponse);
       vi.mocked(postureApi.finalizeAnalysis).mockRejectedValue(
         new Error('Failed to save analysis')
       );
@@ -451,16 +286,12 @@ describe('usePostureAnalysis', () => {
         expect(result.current.step).toBe('capturing');
       });
 
-      // Process 450 frames
-      for (let i = 0; i < 450; i++) {
-        await act(async () => {
-          await result.current.processFrame('base64-data', i);
-        });
-      }
+      // No per-frame round trip any more: pose estimation runs in the browser
+      // and the landmarks are posted once, by finalizeAnalysis.
 
       // Try to finalize
       await act(async () => {
-        await result.current.finalizeAnalysis();
+        await result.current.finalizeAnalysis('session-123', 'booking-456', { samples: [] });
       });
 
       await waitFor(() => {
@@ -678,7 +509,6 @@ describe('usePostureAnalysis', () => {
 
       vi.mocked(postureApi.validateBooking).mockResolvedValue(mockValidation);
       vi.mocked(postureApi.startAnalysis).mockResolvedValue(mockStartResponse);
-      vi.mocked(postureApi.processFrame).mockResolvedValue(mockFrameResponse);
       vi.mocked(postureApi.finalizeAnalysis).mockResolvedValue(mockAnalysisResult);
 
       const { result } = renderHook(() => usePostureAnalysis(), {
@@ -696,14 +526,9 @@ describe('usePostureAnalysis', () => {
         expect(result.current.step).toBe('capturing');
       });
 
-      for (let i = 0; i < 450; i++) {
-        await act(async () => {
-          await result.current.processFrame('base64-data', i);
-        });
-      }
 
       await act(async () => {
-        await result.current.finalizeAnalysis();
+        await result.current.finalizeAnalysis('session-123', 'booking-456', { samples: [] });
       });
 
       await waitFor(() => {

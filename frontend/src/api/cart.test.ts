@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cartAPI, getCart, addItem, updateItem, removeItem, clearCart } from './cart';
 import { apiClient } from './client';
 import { Cart } from '../types';
@@ -26,6 +26,14 @@ describe('Cart API', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // getCart returns an empty cart WITHOUT calling the API when there is no auth
+    // token - a signed-out visitor has no cart to fetch. The test predates that
+    // guard, so its request was never made.
+    localStorage.setItem('auth_token', 'test-token');
+  });
+
+  afterEach(() => {
+    localStorage.clear();
   });
 
   describe('getCart', () => {

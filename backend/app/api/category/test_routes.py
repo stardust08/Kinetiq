@@ -5,9 +5,29 @@ This module tests the category API endpoints including:
 - GET /categories
 - GET /categories/{id}
 - GET /categories/{category_id}/services with filters
+
+These are the only tests in the backend that require a REAL DATABASE. They are
+read-only - nothing here writes, so they are safe to point at any environment - but
+they assert against whatever categories and services happen to be seeded, and several
+skip themselves when the tables are empty. That makes them unsuitable as a CI gate:
+they would pass or fail on the contents of a database rather than on the code.
+
+    RUN_DB_INTEGRATION_TESTS=1 python -m pytest app/api/category/test_routes.py
+
+Everything else in the backend runs with no database at all.
 """
 
+import os
+
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("RUN_DB_INTEGRATION_TESTS") != "1",
+    reason=(
+        "Reads from DATABASE_URL and asserts against seeded data. Set "
+        "RUN_DB_INTEGRATION_TESTS=1 to run."
+    ),
+)
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.db.client import db
@@ -24,9 +44,14 @@ async def client():
 @pytest.fixture(autouse=True)
 async def setup_db():
     """Setup and teardown database connection."""
-    await db.connect()
+    # The project-wide autouse fixture in conftest.py has already connected, and
+    # connecting a second time raises AlreadyConnectedError - which errored every
+    # test in this file at setup. Disconnecting here is wrong for the same reason:
+    # the connection is shared, so tearing it down strands every test that runs
+    # afterwards.
+    if not db.is_connected():
+        await db.connect()
     yield
-    await db.disconnect()
 
 
 @pytest.mark.asyncio

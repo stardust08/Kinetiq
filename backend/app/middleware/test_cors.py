@@ -66,7 +66,7 @@ def test_cors_allows_configured_origin():
     # Test request from allowed origin
     response = client.get(
         "/test",
-        headers={"Origin": settings.CORS_ORIGINS[0]}
+        headers={"Origin": settings.cors_origins_list[0]}
     )
     
     assert response.status_code == 200
@@ -88,7 +88,7 @@ def test_cors_credentials_enabled():
     response = client.get(
         "/test",
         headers={
-            "Origin": settings.CORS_ORIGINS[0],
+            "Origin": settings.cors_origins_list[0],
             "Cookie": "session=test"
         }
     )

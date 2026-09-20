@@ -29,9 +29,10 @@ describe('ScreeningCountBadge', () => {
       />
     );
 
-    const badge = container.firstChild as HTMLElement;
-    expect(badge.className).toContain('bg-green-50');
-    expect(badge.className).toContain('border-green-200');
+    // The badge's background moved from Tailwind classes to an inline style, so
+    // className no longer carries the severity. The text colour still does, and
+    // it is the signal a patient reads: green plenty, orange low, red none left.
+    expect(container.querySelector('.text-emerald-400')).not.toBeNull();
   });
 
   it('should display orange color for low remaining count', () => {
@@ -43,9 +44,10 @@ describe('ScreeningCountBadge', () => {
       />
     );
 
-    const badge = container.firstChild as HTMLElement;
-    expect(badge.className).toContain('bg-orange-50');
-    expect(badge.className).toContain('border-orange-200');
+    // The badge's background moved from Tailwind classes to an inline style, so
+    // className no longer carries the severity. The text colour still does, and
+    // it is the signal a patient reads: green plenty, orange low, red none left.
+    expect(container.querySelector('.text-orange-400')).not.toBeNull();
   });
 
   it('should display red color for zero remaining count', () => {
@@ -57,9 +59,10 @@ describe('ScreeningCountBadge', () => {
       />
     );
 
-    const badge = container.firstChild as HTMLElement;
-    expect(badge.className).toContain('bg-red-50');
-    expect(badge.className).toContain('border-red-200');
+    // The badge's background moved from Tailwind classes to an inline style, so
+    // className no longer carries the severity. The text colour still does, and
+    // it is the signal a patient reads: green plenty, orange low, red none left.
+    expect(container.querySelector('.text-red-400')).not.toBeNull();
   });
 
   it('should display progress bar when showProgress is true', () => {
@@ -206,17 +209,15 @@ describe('ScreeningCountBadge', () => {
     expect(redContainer.querySelectorAll('svg').length).toBeGreaterThan(1);
   });
 
-  it('should have hover effect', () => {
+  it('animates state changes rather than hover', () => {
+    // The badge has no hover styling: it is informational, not interactive. What
+    // it does have is a transition, so a count changing after a screening reads as
+    // a change rather than a jump.
     const { container } = render(
-      <ScreeningCountBadge
-        totalCount={10}
-        usedCount={3}
-        remainingCount={7}
-      />
+      <ScreeningCountBadge totalCount={10} usedCount={3} remainingCount={7} />,
     );
 
     const badge = container.firstChild as HTMLElement;
-    expect(badge.className).toContain('hover:shadow-md');
     expect(badge.className).toContain('transition-all');
   });
 

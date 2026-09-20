@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { renderWithProviders } from '../../test/renderWithProviders';
 import BookingCard from './BookingCard';
 import { Booking } from '../../types';
 
@@ -55,7 +56,7 @@ const mockBooking: Booking = {
 
 describe('BookingCard', () => {
   it('renders booking details correctly', () => {
-    render(<BookingCard booking={mockBooking} />);
+    renderWithProviders(<BookingCard booking={mockBooking} />);
 
     expect(screen.getByText('Test Service')).toBeInTheDocument();
     expect(screen.getByText('CONFIRMED')).toBeInTheDocument();
@@ -65,28 +66,28 @@ describe('BookingCard', () => {
   });
 
   it('displays payment information', () => {
-    render(<BookingCard booking={mockBooking} />);
+    renderWithProviders(<BookingCard booking={mockBooking} />);
 
-    expect(screen.getByText(/Total: ₹1000.00/)).toBeInTheDocument();
+    expect(screen.getByText('₹1000.00')).toBeInTheDocument();
     expect(screen.getByText(/Paid: ₹500.00/)).toBeInTheDocument();
-    expect(screen.getByText(/Remaining: ₹500.00/)).toBeInTheDocument();
+    expect(screen.getByText(/Due: ₹500.00/)).toBeInTheDocument();
   });
 
   it('displays scheduled time', () => {
-    render(<BookingCard booking={mockBooking} />);
+    renderWithProviders(<BookingCard booking={mockBooking} />);
 
-    expect(screen.getByText(/Scheduled Time/)).toBeInTheDocument();
+    expect(screen.getByText('Scheduled')).toBeInTheDocument();
     expect(screen.getByText(/Feb/)).toBeInTheDocument();
   });
 
   it('displays description when provided', () => {
-    render(<BookingCard booking={mockBooking} />);
+    renderWithProviders(<BookingCard booking={mockBooking} />);
 
     expect(screen.getByText('Test booking description')).toBeInTheDocument();
   });
 
   it('displays service details when available', () => {
-    render(<BookingCard booking={mockBooking} />);
+    renderWithProviders(<BookingCard booking={mockBooking} />);
 
     expect(screen.getByText(/Duration:/)).toBeInTheDocument();
     expect(screen.getByText('60 minutes')).toBeInTheDocument();
@@ -96,7 +97,7 @@ describe('BookingCard', () => {
 
   it('shows pay remaining button for partial payments', () => {
     const onPayRemaining = vi.fn();
-    render(
+    renderWithProviders(
       <BookingCard 
         booking={mockBooking} 
         onPayRemaining={onPayRemaining}
@@ -122,20 +123,20 @@ describe('BookingCard', () => {
       },
     };
 
-    render(<BookingCard booking={completedBooking} />);
+    renderWithProviders(<BookingCard booking={completedBooking} />);
 
     expect(screen.queryByText('Pay Remaining')).not.toBeInTheDocument();
   });
 
   it('does not show pay remaining button when onPayRemaining is not provided', () => {
-    render(<BookingCard booking={mockBooking} />);
+    renderWithProviders(<BookingCard booking={mockBooking} />);
 
     expect(screen.queryByText('Pay Remaining')).not.toBeInTheDocument();
   });
 
   it('shows processing state when paying remaining', () => {
     const onPayRemaining = vi.fn();
-    render(
+    renderWithProviders(
       <BookingCard 
         booking={mockBooking} 
         onPayRemaining={onPayRemaining}
@@ -149,10 +150,11 @@ describe('BookingCard', () => {
   });
 
   it('displays created date', () => {
-    render(<BookingCard booking={mockBooking} />);
+    renderWithProviders(<BookingCard booking={mockBooking} />);
 
-    expect(screen.getByText(/Booked on/)).toBeInTheDocument();
-    expect(screen.getByText(/January 1, 2024/)).toBeInTheDocument();
+    // The footer formats with month: 'short' and no "Booked on" prefix, so the
+    // created date reads "Jan 1, 2024".
+    expect(screen.getByText('Jan 1, 2024')).toBeInTheDocument();
   });
 
   it('handles booking without service details', () => {
@@ -161,7 +163,7 @@ describe('BookingCard', () => {
       service: undefined,
     };
 
-    render(<BookingCard booking={bookingWithoutService} />);
+    renderWithProviders(<BookingCard booking={bookingWithoutService} />);
 
     expect(screen.getByText('Service')).toBeInTheDocument();
     expect(screen.queryByText(/Service Details/)).not.toBeInTheDocument();
@@ -173,13 +175,13 @@ describe('BookingCard', () => {
       description: undefined,
     };
 
-    render(<BookingCard booking={bookingWithoutDescription} />);
+    renderWithProviders(<BookingCard booking={bookingWithoutDescription} />);
 
     expect(screen.queryByText('Description')).not.toBeInTheDocument();
   });
 
   it('displays correct badge variants for different statuses', () => {
-    const { rerender } = render(<BookingCard booking={mockBooking} />);
+    const { rerender } = renderWithProviders(<BookingCard booking={mockBooking} />);
     expect(screen.getByText('CONFIRMED')).toBeInTheDocument();
 
     const completedBooking = { ...mockBooking, status: 'COMPLETED' as const };
@@ -193,14 +195,14 @@ describe('BookingCard', () => {
 
   it('shows view details button when onViewDetails is provided', () => {
     const onViewDetails = vi.fn();
-    render(
+    renderWithProviders(
       <BookingCard 
         booking={mockBooking} 
         onViewDetails={onViewDetails}
       />
     );
 
-    const viewButton = screen.getByText('View Details');
+    const viewButton = screen.getByText('Details');
     expect(viewButton).toBeInTheDocument();
 
     fireEvent.click(viewButton);
@@ -208,22 +210,22 @@ describe('BookingCard', () => {
   });
 
   it('does not show view details button when onViewDetails is not provided', () => {
-    render(<BookingCard booking={mockBooking} />);
+    renderWithProviders(<BookingCard booking={mockBooking} />);
 
-    expect(screen.queryByText('View Details')).not.toBeInTheDocument();
+    expect(screen.queryByText('Details')).not.toBeInTheDocument();
   });
 
   describe('Posture Analysis Actions', () => {
     it('shows start assessment button when onStartAssessment is provided and counts remain', () => {
       const onStartAssessment = vi.fn();
-      render(
+      renderWithProviders(
         <BookingCard 
           booking={mockBooking} 
           onStartAssessment={onStartAssessment}
         />
       );
 
-      const startButton = screen.getByText('Start Assessment');
+      const startButton = screen.getByText('Posture Analysis');
       expect(startButton).toBeInTheDocument();
       expect(startButton).not.toBeDisabled();
 
@@ -239,7 +241,7 @@ describe('BookingCard', () => {
         usedScreeningCount: 10,
       };
 
-      render(
+      renderWithProviders(
         <BookingCard 
           booking={bookingWithNoCounts} 
           onStartAssessment={onStartAssessment}
@@ -252,14 +254,14 @@ describe('BookingCard', () => {
 
     it('shows view history button when onViewHistory is provided and analyses exist', () => {
       const onViewHistory = vi.fn();
-      render(
+      renderWithProviders(
         <BookingCard 
           booking={mockBooking} 
           onViewHistory={onViewHistory}
         />
       );
 
-      const historyButton = screen.getByText(/View History \(2\)/);
+      const historyButton = screen.getByRole('button', { name: /History \(3\)/ });
       expect(historyButton).toBeInTheDocument();
 
       fireEvent.click(historyButton);
@@ -268,19 +270,23 @@ describe('BookingCard', () => {
 
     it('does not show view history button when no analyses exist', () => {
       const onViewHistory = vi.fn();
+      // The card decides from usedScreeningCount, not from a postureAnalyses array -
+      // the list view does not fetch the analyses at all, so an empty array here said
+      // nothing and the button rendered anyway.
       const bookingWithNoAnalyses = {
         ...mockBooking,
+        usedScreeningCount: 0,
         postureAnalyses: [],
       };
 
-      render(
+      renderWithProviders(
         <BookingCard 
           booking={bookingWithNoAnalyses} 
           onViewHistory={onViewHistory}
         />
       );
 
-      expect(screen.queryByText(/View History/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /History/ })).not.toBeInTheDocument();
     });
 
     it('does not show posture analysis actions when totalScreeningCount is 0', () => {
@@ -293,7 +299,7 @@ describe('BookingCard', () => {
         remainingScreeningCount: 0,
       };
 
-      render(
+      renderWithProviders(
         <BookingCard 
           booking={bookingWithNoScreening} 
           onStartAssessment={onStartAssessment}
@@ -301,15 +307,15 @@ describe('BookingCard', () => {
         />
       );
 
-      expect(screen.queryByText('Start Assessment')).not.toBeInTheDocument();
-      expect(screen.queryByText(/View History/)).not.toBeInTheDocument();
+      expect(screen.queryByText('Posture Analysis')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /History/ })).not.toBeInTheDocument();
     });
 
     it('shows both buttons when both handlers are provided', () => {
       const onStartAssessment = vi.fn();
       const onViewHistory = vi.fn();
 
-      render(
+      renderWithProviders(
         <BookingCard 
           booking={mockBooking} 
           onStartAssessment={onStartAssessment}
@@ -317,8 +323,8 @@ describe('BookingCard', () => {
         />
       );
 
-      expect(screen.getByText('Start Assessment')).toBeInTheDocument();
-      expect(screen.getByText(/View History \(2\)/)).toBeInTheDocument();
+      expect(screen.getByText('Posture Analysis')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /History \(3\)/ })).toBeInTheDocument();
     });
   });
 });

@@ -42,12 +42,14 @@ from app.core.metrics.rom_registry import ROM_METRICS
 from app.core.metrics.tolerances import tolerance_for
 from app.core.pose.calibration_v2 import (
     DEFAULT_ASPECT_RATIO,
+    detect_view_from_samples,
     MIN_FRAMES_PER_METRIC,
     VALID_VIEWS,
     MetricResult,
     _drop_non_finite,
     _frontal_tilt,
     _get,
+    _lateral_sign,
     _mid,
     _normalise_keys,
 )
@@ -128,20 +130,81 @@ def _arm_elevation(side: str):
     return impl
 
 
+def _trunk_frontal_tilt(lm, use_world):
+    """
+    Lateral lean of the trunk axis, positive toward the subject's LEFT.
+
+    Signed the same way `_frontal_tilt` signs a left-right bar, so the two can be
+    subtracted: a trunk leaning left carries the ear bar left-side-down, which is the
+    same rotation `_frontal_tilt` reports as positive.
+
+    The lateral direction comes from the HIP line rather than the shoulder line, and
+    that is not interchangeable. The shoulder bar is carried by the trunk and stays
+    perpendicular to it, so projecting the trunk axis onto it yields exactly zero at
+    every lean angle - the reference would measure nothing at all.
+
+    The hip line is then FLATTENED onto the horizontal before use. A pelvis with one
+    side high tilts the raw hip line, and an unflattened reference passes that tilt
+    straight through: 2 cm of pelvic obliquity reported 3.5 degrees of cervical range on
+    a subject holding their head perfectly straight. Flattening keeps only what the hip
+    line is wanted for - which horizontal direction is the subject's left - and discards
+    the part that carries the pelvis's own asymmetry.
+    """
+    mid_hip, mid_sh = _mid(lm, L_HIP, R_HIP), _mid(lm, L_SH, R_SH)
+    l_hip, r_hip = _get(lm, L_HIP), _get(lm, R_HIP)
+    if None in (mid_hip, mid_sh, l_hip, r_hip):
+        return None
+    dims = 3 if use_world else 2
+    left_dir = np.asarray(l_hip[:dims], dtype=float) - np.asarray(r_hip[:dims], dtype=float)
+    left_dir[1] = 0.0  # index 1 is vertical in both spaces
+    norm = np.linalg.norm(left_dir)
+    if norm < 1e-9:
+        return None
+    left_dir = left_dir / norm
+    trunk = np.asarray(mid_sh[:dims], dtype=float) - np.asarray(mid_hip[:dims], dtype=float)
+    run = float(np.dot(trunk, left_dir))
+    rise = abs(float(trunk[1]))
+    if rise < 1e-9:
+        return None
+    # In image space the hip line only fixes the axis, not its direction: which way x
+    # increases toward the subject's left depends on the view and on whether the preview
+    # is mirrored, neither of which the frame can be asked about.
+    if not use_world:
+        lateral = _lateral_sign(lm)
+        if lateral is None:
+            return None
+        run = abs(run) * lateral * (1.0 if (float(l_hip[0]) - float(r_hip[0])) * (
+            float(mid_sh[0]) - float(mid_hip[0])) > 0 else -1.0)
+    return float(np.degrees(np.arctan2(run, rise)))
+
+
 def _cervical_lateral_flexion(lm, use_world, view):
     """
-    Head tilt toward one shoulder, relative to the shoulder line.
+    Head bend toward one shoulder, measured against the TRUNK axis.
 
-    Relative to the shoulders, not to horizontal: a patient with a dropped shoulder
-    would otherwise be credited with cervical range they do not have. Negative = tilted
-    toward the subject's left, matching the posture registry's convention so the two
-    read the same way on one report.
+    Positive = bent toward the subject's LEFT, matching the posture registry's
+    head_lateral_flexion so the resting tilt and the active range read the same way on
+    one report. (The sign convention across this pipeline is set by `_frontal_tilt`:
+    negative when the subject's left side is the high one. A head bending left carries
+    the left ear down, hence positive.)
+
+    Against the trunk rather than the shoulder line, which is the correction that
+    matters clinically. The shoulder girdle floats on the thorax - that is why shoulder
+    elevation is its own posture metric - so referencing it credits girdle movement as
+    neck movement. The classic compensation during this test is shrugging the shoulder
+    up toward the ear, and a shoulder-line reference does not merely tolerate that, it
+    ADDS it: a 20 degree bend with a 5 degree shrug read 25. A raised shoulder on a
+    subject holding their head straight read 3.9 degrees of range that did not exist.
+
+    Against the trunk rather than horizontal for the opposite reason: a patient who
+    side-bends their whole trunk has not moved their neck, and a horizon reference
+    credits the lean in full.
     """
     ear_tilt = _frontal_tilt(lm, use_world, view, L_EAR, R_EAR)
-    shoulder_tilt = _frontal_tilt(lm, use_world, view, L_SH, R_SH)
-    if ear_tilt is None or shoulder_tilt is None:
+    trunk_tilt = _trunk_frontal_tilt(lm, use_world)
+    if ear_tilt is None or trunk_tilt is None:
         return None
-    return ear_tilt - shoulder_tilt
+    return ear_tilt - trunk_tilt
 
 
 # Flexion and abduction share _arm_elevation on purpose, and it is worth saying why
@@ -183,6 +246,7 @@ class ROMResult:
     views_captured: List[str] = field(default_factory=list)
     frames_per_view: Dict[str, int] = field(default_factory=dict)
     aspect_assumed: bool = False
+    orientation_warnings: List[str] = field(default_factory=list)
     schema_version: int = 2
 
     def value(self, key: str) -> Optional[float]:
@@ -198,6 +262,7 @@ class ROMResult:
             "viewsCaptured": self.views_captured,
             "framesPerView": self.frames_per_view,
             "aspectAssumed": self.aspect_assumed,
+            "orientationWarnings": self.orientation_warnings,
             "metrics": {k: v.to_dict() for k, v in self.metrics.items()},
         }
 
@@ -254,6 +319,39 @@ class ROMCalibrator:
     def views_captured(self) -> List[str]:
         return [v for v in VALID_VIEWS if self.samples_by_view.get(v)]
 
+    def observed_view(self, view: str) -> Optional[str]:
+        """Which capture the landmarks filed under `view` actually show."""
+        return detect_view_from_samples(self.samples_by_view.get(view) or [])
+
+    def orientation_warnings(self, movement: str = "") -> List[str]:
+        """
+        Holds whose landmarks disagree with the view they were captured under.
+
+        This matters more for ROM than for any other capture. A posture session asks the
+        patient to turn three times and a gait session twice; a ROM session walks them
+        through front, right-side and left-side setups across ten movements, so there
+        are simply more chances to end up facing the wrong way - and unlike posture,
+        where every view measures the same standing pose, a ROM hold performed from the
+        wrong side measures the FAR limb through the near one.
+
+        The browser gate blocks this while the patient is still standing there, which is
+        the only cheap fix. This is the second opinion: the browser can be bypassed, a
+        mirrored preview can fool a person, and the frames are the only record of what
+        actually happened.
+        """
+        warnings: List[str] = []
+        for view in self.views_captured:
+            observed = self.observed_view(view)
+            if observed is None or observed == view:
+                continue
+            subject = f"The hold for '{movement}'" if movement else "This hold"
+            warnings.append(
+                f"{subject} was captured as a '{view}' view, but the landmarks show a "
+                f"'{observed}' view. The joint being measured may be the far one, seen "
+                f"through the body. Re-capture this movement facing the other way."
+            )
+        return warnings
+
     def finalize(self, person_id: str, movement: str = "") -> ROMResult:
         result = ROMResult(
             calibration_date=datetime.now(timezone.utc).isoformat(),
@@ -262,6 +360,7 @@ class ROMCalibrator:
             views_captured=self.views_captured,
             frames_per_view={v: self.frames(v) for v in self.views_captured},
             aspect_assumed=self.aspect_assumed,
+            orientation_warnings=self.orientation_warnings(movement),
         )
         for spec in ROM_METRICS:
             result.metrics[spec.key] = self._compute(spec)

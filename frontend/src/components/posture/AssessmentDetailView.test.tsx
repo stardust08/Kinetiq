@@ -186,7 +186,9 @@ describe('AssessmentDetailView', () => {
     fireEvent.click(visualizationTab);
     
     expect(visualizationTab).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByTestId('skeleton-visualization')).toBeInTheDocument();
+    // The tab no longer renders a skeleton inline. It shows one card per captured
+    // pose, each with its own control to open that pose in the 3D viewer.
+    expect(screen.getAllByRole('button', { name: '🔭 3D' }).length).toBeGreaterThan(1);
     expect(screen.queryByTestId('metrics-display')).not.toBeInTheDocument();
   });
 
@@ -196,13 +198,13 @@ describe('AssessmentDetailView', () => {
     // Switch to visualization
     const visualizationTab = screen.getByText('🦴 3D Skeleton');
     fireEvent.click(visualizationTab);
-    expect(screen.getByTestId('skeleton-visualization')).toBeInTheDocument();
+    expect(screen.queryByTestId('metrics-display')).not.toBeInTheDocument();
     
     // Switch back to metrics
     const metricsTab = screen.getByText('📊 Clinical Metrics');
     fireEvent.click(metricsTab);
     expect(screen.getByTestId('metrics-display')).toBeInTheDocument();
-    expect(screen.queryByTestId('skeleton-visualization')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '🔭 3D' })).toBeNull();
   });
 
   it('passes correct props to MetricsDisplay', () => {
@@ -213,16 +215,16 @@ describe('AssessmentDetailView', () => {
     expect(metricsDisplay).toHaveTextContent('Remaining: 7');
   });
 
-  it('passes correct props to SkeletonVisualization', () => {
+  it('offers one 3D view per captured pose', () => {
+    // SkeletonVisualization is no longer rendered inline with the analysis passed to
+    // it. Each pose gets a thumbnail and its own viewer control, so what replaced the
+    // prop assertion is that every pose is offered.
     render(<AssessmentDetailView analysis={mockAnalysis} />);
-    
-    // Switch to visualization tab
-    const visualizationTab = screen.getByText('🦴 3D Skeleton');
-    fireEvent.click(visualizationTab);
-    
-    const skeletonViz = screen.getByTestId('skeleton-visualization');
-    expect(skeletonViz).toHaveTextContent('Analysis ID: analysis-123');
-    expect(skeletonViz).toHaveTextContent('Size: 800x600');
+
+    fireEvent.click(screen.getByText('🦴 3D Skeleton'));
+
+    expect(screen.getByAltText(/Front posture/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '🔭 3D' })).toHaveLength(4);
   });
 
   it('displays assessment information section', () => {
@@ -294,8 +296,10 @@ describe('AssessmentDetailView', () => {
     const visualizationTab = screen.getByText('🦴 3D Skeleton');
     fireEvent.click(visualizationTab);
     
-    expect(screen.getByText('3D Skeleton Visualization')).toBeInTheDocument();
-    expect(screen.getByText(/Use the view controls to rotate/)).toBeInTheDocument();
+    // The heading and rotate hint belonged to the inline viewer. The tab now tells
+    // the clinician how to open a pose and what the viewer offers once open.
+    expect(screen.getByText(/Click/)).toBeInTheDocument();
+    expect(screen.getByText(/Photo On\/Off/)).toBeInTheDocument();
   });
 
   it('renders all booking information fields', () => {

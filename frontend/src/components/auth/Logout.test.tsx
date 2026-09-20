@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { renderWithProviders } from '../../test/renderWithProviders';
 import userEvent from '@testing-library/user-event';
 import { AuthButton } from '../layout/AuthButton';
 import { useAuthStore } from '../../store/authStore';
@@ -44,19 +45,19 @@ describe('Logout Flow Integration', () => {
         isAuthenticated: true,
       });
 
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
 
       // Verify user is logged in
-      expect(screen.getByRole('button', { name: /test user/i })).toBeInTheDocument();
+      expect(screen.getByRole('button')).toBeInTheDocument();
       expect(localStorage.getItem('auth_token')).toBe('test-token-123');
 
       // Open dropdown menu
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = screen.getByRole('button');
+      await user.hover(menuButton);
 
       // Click logout
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
 
       // Verify API was called
       await waitFor(() => {
@@ -87,7 +88,6 @@ describe('Logout Flow Integration', () => {
       // Mock console.error to suppress error output in tests
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       
-      // Create a rejected promise that will be caught by useAuth
       vi.mocked(authApi.logout).mockRejectedValue(new Error('Network error'));
 
       // Set up authenticated state
@@ -98,15 +98,15 @@ describe('Logout Flow Integration', () => {
         isAuthenticated: true,
       });
 
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
 
       // Open dropdown menu
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = screen.getByRole('button');
+      await user.hover(menuButton);
 
       // Click logout
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
 
       // Verify API was called
       await waitFor(() => {
@@ -144,18 +144,19 @@ describe('Logout Flow Integration', () => {
         isAuthenticated: true,
       });
 
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
 
-      // Verify user is logged in (showing phone number)
-      expect(screen.getByRole('button', { name: /\+1234567890/i })).toBeInTheDocument();
+      // The header shows an avatar with no text, so a user without a name looks
+      // exactly like one with a name - which is the point of this case: logging out
+      // must work either way.
+      expect(screen.getByRole('button')).toBeInTheDocument();
 
-      // Open dropdown menu
-      const menuButton = screen.getByRole('button', { name: /\+1234567890/i });
-      await user.click(menuButton);
+      const menuButton = screen.getByRole('button');
+      await user.hover(menuButton);
 
       // Click logout
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
 
       // Verify complete logout
       await waitFor(() => {
@@ -178,15 +179,15 @@ describe('Logout Flow Integration', () => {
         isAuthenticated: true,
       });
 
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
 
       // Open dropdown menu
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = screen.getByRole('button');
+      await user.hover(menuButton);
 
       // Click logout
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
 
       // Verify logout completes
       await waitFor(() => {
@@ -209,13 +210,13 @@ describe('Logout Flow Integration', () => {
         isAuthenticated: true,
       });
 
-      const { unmount } = render(<AuthButton />);
+      const { unmount } = renderWithProviders(<AuthButton />);
 
       // Perform logout
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = screen.getByRole('button');
+      await user.hover(menuButton);
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
 
       // Wait for logout to complete
       await waitFor(() => {
@@ -235,7 +236,7 @@ describe('Logout Flow Integration', () => {
         isAuthenticated: false,
       });
 
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
 
       // Verify user is still logged out
       expect(screen.getByRole('button', { name: /login/i })).toBeInTheDocument();
@@ -256,16 +257,16 @@ describe('Logout Flow Integration', () => {
         isAuthenticated: true,
       });
 
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
 
       // Verify token exists
       expect(localStorage.getItem('auth_token')).toBe('test-token-123');
 
       // Perform logout
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = screen.getByRole('button');
+      await user.hover(menuButton);
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
 
       // Verify token is removed
       await waitFor(() => {
@@ -285,13 +286,13 @@ describe('Logout Flow Integration', () => {
         isAuthenticated: true,
       });
 
-      render(<AuthButton />);
+      renderWithProviders(<AuthButton />);
 
       // Perform logout
-      const menuButton = screen.getByRole('button', { name: /test user/i });
-      await user.click(menuButton);
+      const menuButton = screen.getByRole('button');
+      await user.hover(menuButton);
       const logoutItem = await screen.findByText('Logout');
-      await user.click(logoutItem);
+      fireEvent.click(logoutItem);
 
       // Verify token is removed regardless of mismatch
       await waitFor(() => {

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   startAnalysis,
-  processFrame,
   finalizeAnalysis,
   cancelAnalysis,
   getMyAssessments,
@@ -51,7 +50,7 @@ describe('Posture API', () => {
         expiresAt: '2024-01-01T12:15:00Z',
       };
 
-      vi.mocked(apiClient.post).mockResolvedValue({ data: mockResponse });
+      vi.mocked(apiClient.post).mockResolvedValue({ data: { data: mockResponse } });
 
       const result = await startAnalysis(request);
 
@@ -77,88 +76,6 @@ describe('Posture API', () => {
     });
   });
 
-  describe('processFrame', () => {
-    it('should process frame successfully', async () => {
-      const request: ProcessFrameRequest = {
-        sessionId: 'session-456',
-        frameData: 'base64encodeddata',
-        frameNumber: 1,
-      };
-
-      const mockResponse: ProcessFrameResponse = {
-        landmarks: { pose: { 0: [100, 200, 0, 0.95] } },
-        visibility: 0.95,
-        progress: 0.002,
-        message: 'Frame processed successfully',
-      };
-
-      vi.mocked(apiClient.post).mockResolvedValue({ data: mockResponse });
-
-      const result = await processFrame(request);
-
-      expect(apiClient.post).toHaveBeenCalledWith(
-        '/api/posture/process-frame',
-        request
-      );
-      expect(result).toEqual(mockResponse);
-    });
-
-    it('should handle invalid frame data', async () => {
-      const request: ProcessFrameRequest = {
-        sessionId: 'session-456',
-        frameData: 'invalid-data',
-        frameNumber: 1,
-      };
-
-      vi.mocked(apiClient.post).mockRejectedValue(
-        new Error('Invalid frame data')
-      );
-
-      await expect(processFrame(request)).rejects.toThrow('Invalid frame data');
-    });
-
-    it('should retry on network errors', async () => {
-      const request: ProcessFrameRequest = {
-        sessionId: 'session-456',
-        frameData: 'base64encodeddata',
-        frameNumber: 1,
-      };
-
-      const mockResponse: ProcessFrameResponse = {
-        landmarks: { pose: { 0: [100, 200, 0, 0.95] } },
-        visibility: 0.95,
-        progress: 0.002,
-        message: 'Frame processed successfully',
-      };
-
-      // Fail twice, then succeed
-      vi.mocked(apiClient.post)
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockResolvedValueOnce({ data: mockResponse });
-
-      const result = await processFrame(request);
-
-      expect(apiClient.post).toHaveBeenCalledTimes(3);
-      expect(result).toEqual(mockResponse);
-    });
-
-    it('should fail after max retries', async () => {
-      const request: ProcessFrameRequest = {
-        sessionId: 'session-456',
-        frameData: 'base64encodeddata',
-        frameNumber: 1,
-      };
-
-      // Fail all attempts
-      vi.mocked(apiClient.post).mockRejectedValue(new Error('Network error'));
-
-      await expect(processFrame(request)).rejects.toThrow('Network error');
-      
-      // Should try 4 times total (initial + 3 retries)
-      expect(apiClient.post).toHaveBeenCalledTimes(4);
-    });
-  });
 
   describe('finalizeAnalysis', () => {
     it('should finalize analysis and return results', async () => {
@@ -212,7 +129,9 @@ describe('Posture API', () => {
         status: 'completed',
       };
 
-      vi.mocked(apiClient.post).mockResolvedValue({ data: mockAnalysis });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { data: { analysis: mockAnalysis, remainingCount: 4 } },
+      });
 
       const result = await finalizeAnalysis(request);
 
@@ -293,7 +212,9 @@ describe('Posture API', () => {
       // Fail once with server error, then succeed
       vi.mocked(apiClient.post)
         .mockRejectedValueOnce(new Error('Server error'))
-        .mockResolvedValueOnce({ data: mockAnalysis });
+        .mockResolvedValueOnce({
+          data: { data: { analysis: mockAnalysis, remainingCount: 4 } },
+        });
 
       const result = await finalizeAnalysis(request);
 
@@ -310,6 +231,8 @@ describe('Posture API', () => {
 
       const mockResponse = { message: 'Analysis cancelled successfully' };
 
+      // cancelAnalysis is the one posture endpoint that answers UNWRAPPED, so its
+      // mock carries one envelope level, not two.
       vi.mocked(apiClient.post).mockResolvedValue({ data: mockResponse });
 
       const result = await cancelAnalysis(request);
@@ -369,7 +292,7 @@ describe('Posture API', () => {
         },
       ];
 
-      vi.mocked(apiClient.get).mockResolvedValue({ data: mockAssessments });
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { data: mockAssessments } });
 
       const result = await getMyAssessments();
 
@@ -386,7 +309,7 @@ describe('Posture API', () => {
         offset: 0,
       };
 
-      vi.mocked(apiClient.get).mockResolvedValue({ data: [] });
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { data: [] } });
 
       await getMyAssessments(params);
 
@@ -443,7 +366,7 @@ describe('Posture API', () => {
         status: 'completed',
       };
 
-      vi.mocked(apiClient.get).mockResolvedValue({ data: mockAnalysis });
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { data: mockAnalysis } });
 
       const result = await getAnalysisById(analysisId);
 
@@ -474,7 +397,7 @@ describe('Posture API', () => {
         usedCount: 5,
       };
 
-      vi.mocked(apiClient.get).mockResolvedValue({ data: mockResponse });
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { data: mockResponse } });
 
       const result = await validateBooking(bookingId);
 
@@ -494,7 +417,7 @@ describe('Posture API', () => {
         message: 'No remaining screening counts',
       };
 
-      vi.mocked(apiClient.get).mockResolvedValue({ data: mockResponse });
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { data: mockResponse } });
 
       const result = await validateBooking(bookingId);
 

@@ -50,7 +50,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.metrics.gait_registry import GAIT_METRICS
 from app.core.metrics.registry import POSTURE_METRICS, Status
-from app.core.metrics.tolerances import GAIT_TOLERANCE, POSTURE_TOLERANCE
+from app.core.metrics.pose_rom_shim import DRAW_RANGE, MOVEMENTS
+from app.core.metrics.rom_registry import ROM_METRICS
+from app.core.metrics.tolerances import GAIT_TOLERANCE, POSTURE_TOLERANCE, ROM_TOLERANCE
 from scripts.certify_accuracy import (
     SHIPPED,
     draw_conditions,
@@ -61,6 +63,7 @@ from scripts.certify_accuracy import (
 )
 from app.core.gait.calibration_v2 import GaitAnalyser
 from app.core.pose.calibration_v2 import PostureCalibrator
+from app.core.pose.rom_v2 import ROMCalibrator
 from app.core.validation.camera import Camera, emit_gait_frames, emit_pose_samples
 from app.core.validation.gait_sequence import generate_walk
 from app.core.validation.harness import VIEW_AZIMUTH
@@ -127,6 +130,66 @@ def gait_session(params, rng: np.random.Generator) -> dict:
     }
 
 
+def draw_rom_subject(rng: np.random.Generator) -> dict:
+    """
+    One subject's end-range holds, drawn ONCE and held across every repeat session.
+
+    ROM needs its own subject draw rather than reusing the posture one because a
+    session here is a set of holds, not a stance: the quantity being repeated is how
+    far each joint went, and that has to be identical between visits for the spread to
+    be measurement error.
+    """
+    height = float(rng.uniform(1.50, 1.95))
+    subject = {}
+    for key, (field_name, views) in MOVEMENTS.items():
+        lo, hi = DRAW_RANGE[field_name]
+        subject[key] = (
+            field_name,
+            views,
+            Pose(
+                height_m=height,
+                trunk_lean_sagittal=float(rng.uniform(-4, 8)),
+                trunk_lean_lateral=float(rng.uniform(-5, 5)),
+                **{field_name: float(rng.uniform(lo, hi))},
+            ),
+        )
+    return subject
+
+
+def rom_session(subject: dict, rng: np.random.Generator) -> dict:
+    """One ROM screening of a fixed subject under freshly drawn capture conditions."""
+    cond = draw_conditions(rng)
+    out = {}
+    for key, (field_name, views, pose) in subject.items():
+        points = build_skeleton(pose)
+        cal = ROMCalibrator(
+            normalised_input=True, aspect_ratio=cond["width"] / cond["height"]
+        )
+        for view in views:
+            cam = Camera(
+                azimuth_deg=VIEW_AZIMUTH[view], distance_m=cond["distance"],
+                target=(0.0, pose.height_m * 0.5, 0.0),
+                image_width=cond["width"], image_height=cond["height"],
+                focal_px=cond["focal"],
+            )
+            for raw in emit_pose_samples(
+                points, cam, n_samples=60, jitter_px=cond["jitter"], include_world=True,
+                jitter_m=cond["world_jitter"], world_bias_m=cond["world_bias"], rng=rng,
+            ):
+                cal.add_sample(
+                    {
+                        "pose": {i: [v[0] / cond["width"], v[1] / cond["height"], v[2], v[3]]
+                                 for i, v in raw["pose"].items()},
+                        "pose_world": {i: list(v) for i, v in raw["pose_world"].items()},
+                    },
+                    view=view,
+                )
+        metric = cal.finalize("retest", movement=field_name).metrics.get(key)
+        if metric is not None and metric.status in SHIPPED and metric.value is not None:
+            out[key] = metric.value
+    return out
+
+
 def icc_and_sem(by_subject: list) -> tuple:
     """
     ICC(2,1) and SEM from a subjects x sessions matrix of repeated measurements.
@@ -168,17 +231,27 @@ def main() -> int:
     for i in range(args.subjects):
         pose = draw_posture_pose(rng)
         walk = draw_walk(rng, int(rng.choice([45, 52, 60, 60])))
+        rom_subject = draw_rom_subject(rng)
         per_metric = defaultdict(list)
         for _ in range(args.sessions):
-            for key, value in {**posture_session(pose, rng), **gait_session(walk, rng)}.items():
+            session = {
+                **posture_session(pose, rng),
+                **gait_session(walk, rng),
+                **rom_session(rom_subject, rng),
+            }
+            for key, value in session.items():
                 per_metric[key].append(value)
         for key, values in per_metric.items():
             repeats[key].append(values)
         if (i + 1) % 10 == 0:
             print(f"  ... {i + 1}/{args.subjects} subjects", file=sys.stderr)
 
-    tol = {**POSTURE_TOLERANCE, **GAIT_TOLERANCE}
-    order = [s.key for s in POSTURE_METRICS] + [s.key for s in GAIT_METRICS]
+    tol = {**POSTURE_TOLERANCE, **GAIT_TOLERANCE, **ROM_TOLERANCE}
+    order = (
+        [s.key for s in POSTURE_METRICS]
+        + [s.key for s in GAIT_METRICS]
+        + [s.key for s in ROM_METRICS]
+    )
 
     print(f"\n{'=' * 100}\nTEST-RETEST REPEATABILITY - {args.subjects} subjects x "
           f"{args.sessions} sessions\n{'=' * 100}")

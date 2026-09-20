@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isScreenable, screenableBookings } from '../../lib/screenableBooking';
 import { useBookings } from '../../hooks/useBookings';
 import BookingSelector from './BookingSelector';
 import NoBookingsState from './NoBookingsState';
@@ -98,7 +99,7 @@ export default function BookingSelectionStep({
 
   // Check if any bookings have remaining counts
   const hasBookingsWithCounts = bookings.some(
-    (booking) => booking.remainingScreeningCount > 0
+    (booking) => isScreenable(booking)
   );
 
   // No counts remaining state

@@ -22,6 +22,7 @@ import pytest
 from app.core.gait.calibration_v2 import GaitAnalyser
 from app.core.metrics.registry import Status
 from app.core.pose.calibration_v2 import PostureCalibrator
+from app.core.pose.rom_v2 import ROMCalibrator
 from app.core.validation.camera import Camera, emit_gait_frames, emit_pose_samples
 from app.core.validation.gait_sequence import WalkParams, generate_walk
 from app.core.validation.harness import VIEW_AZIMUTH
@@ -81,6 +82,38 @@ def run_gait(views=("leftside", "front"), params=None, transform=None, fps=None,
             series = transform(series)
         analyser.add_view(view, series)
     return analyser.finalize("edge"), truth
+
+
+def rom_samples(movement="knee_flexion_left", pose=None, view=None, n=60,
+                jitter_px=0.0, width=1280, height=720, transform=None):
+    """Client-shaped ROM hold; `transform` may corrupt each sample."""
+    from app.api.rom.service import MOVEMENTS as ROM_MOVEMENT_MAP
+
+    view = view or ROM_MOVEMENT_MAP[movement]["view"]
+    points = build_skeleton(pose or Pose(knee_flexion_left=120.0))
+    rng = np.random.default_rng(5)
+    cam = Camera(azimuth_deg=VIEW_AZIMUTH[view], image_width=width,
+                 image_height=height, focal_px=min(width, height))
+    out = []
+    for raw in emit_pose_samples(points, cam, n_samples=n, jitter_px=jitter_px,
+                                 include_world=True, rng=rng):
+        sample = {
+            "pose": {str(i): [v[0] / width, v[1] / height, v[2], v[3]]
+                     for i, v in raw["pose"].items()},
+            "pose_world": {str(i): list(v) for i, v in raw["pose_world"].items()},
+        }
+        if transform is not None:
+            sample = transform(sample)
+        out.append(sample)
+    return view, out
+
+
+def run_rom(samples, view, width=1280, height=720, aspect=None):
+    cal = ROMCalibrator(normalised_input=True,
+                        aspect_ratio=aspect if aspect is not None else width / height)
+    for sample in samples:
+        cal.add_sample(sample, view=view)
+    return cal.finalize("edge")
 
 
 def assert_no_fabrication(result, context: str):
@@ -539,3 +572,225 @@ class TestGaitEdgeCases:
                 assert m.value is None, key
                 assert m.detail, key
                 assert m.normal_range is None, f"{key} is unsupported but still graded"
+
+
+# ---------------------------------------------------------------------------
+# Range-of-motion screening
+# ---------------------------------------------------------------------------
+
+
+class TestROMEdgeCases:
+    """
+    ROM reuses the posture capture path, so it inherits that path's gates - but it does
+    NOT inherit its tests, and the two differ in the way that matters: a posture capture
+    is one pose scored across every metric, while a ROM session is ten separate holds
+    each scored against one joint. A degenerate hold therefore has to fail on its own,
+    not be rescued by the other nine.
+    """
+
+    def test_no_samples_at_all(self):
+        result = ROMCalibrator(normalised_input=True).finalize("edge")
+        assert_no_fabrication(result, "empty ROM capture")
+        assert all(m.value is None for m in result.metrics.values())
+
+    @pytest.mark.parametrize("n", [0, 1, 5, 9])
+    def test_a_hold_too_short_never_produces_a_number(self, n):
+        """
+        The calibrator's own floor is MIN_FRAMES_PER_METRIC (10). The ROM service sets a
+        stricter one - 20 frames, a third of a second of steady hold - and rejects the
+        capture before the calibrator sees it, which is asserted in
+        app/api/rom/test_service.py. Both floors are real and this pins the lower one,
+        because it is what protects any caller that bypasses the service.
+        """
+        view, samples = rom_samples(n=n)
+        result = run_rom(samples, view)
+        assert result.metrics["rom_knee_flexion_left"].value is None
+        assert_no_fabrication(result, f"{n}-frame hold")
+
+    def test_landmarks_entirely_absent(self):
+        view, samples = rom_samples(transform=lambda s: {"pose": {}, "pose_world": {}})
+        result = run_rom(samples, view)
+        assert_no_fabrication(result, "no landmarks")
+
+    def test_the_specific_landmarks_a_metric_needs_are_missing(self):
+        """An occluded ankle must take out knee flexion and nothing else."""
+        def drop_ankles(sample):
+            for space in ("pose", "pose_world"):
+                for idx in ("27", "28"):
+                    sample[space].pop(idx, None)
+            return sample
+
+        view, samples = rom_samples(transform=drop_ankles)
+        result = run_rom(samples, view)
+        assert result.metrics["rom_knee_flexion_left"].value is None
+        assert_no_fabrication(result, "ankles occluded")
+
+    def test_non_finite_landmark_values(self):
+        def corrupt(sample):
+            sample["pose"]["25"] = [float("nan"), float("inf"), 0.0, 0.9]
+            sample["pose_world"]["25"] = [float("nan"), 0.0, float("-inf"), 0.9]
+            return sample
+
+        view, samples = rom_samples(transform=corrupt)
+        result = run_rom(samples, view)
+        assert_no_fabrication(result, "NaN landmarks")
+
+    def test_all_landmarks_collapsed_to_one_point(self):
+        """What a capture of an empty room, or a fully occluded subject, amounts to."""
+        def collapse(sample):
+            sample["pose"] = {k: [0.5, 0.5, 0.0, 0.9] for k in sample["pose"]}
+            sample["pose_world"] = {k: [0.0, 0.0, 0.0, 0.9] for k in sample["pose_world"]}
+            return sample
+
+        view, samples = rom_samples(transform=collapse)
+        result = run_rom(samples, view)
+        assert_no_fabrication(result, "collapsed landmarks")
+
+    @pytest.mark.parametrize("width,height", [(720, 1280), (1080, 1920)])
+    def test_portrait_capture_is_handled_not_skewed(self, width, height):
+        """A phone held upright is the common case, not the exotic one."""
+        view, samples = rom_samples(width=width, height=height)
+        result = run_rom(samples, view, width=width, height=height)
+        value = result.metrics["rom_knee_flexion_left"].value
+        assert value is not None, "a portrait capture measured nothing"
+        assert value == pytest.approx(120.0, abs=5.0)
+
+    def test_a_hold_performed_facing_the_wrong_way_is_detected(self):
+        """
+        A hold filed under the view its movement needs, but actually performed facing
+        the other way, must be reported.
+
+        Detection is what is asserted here, NOT a wrong number - and the distinction is
+        the point. A sagittal angle projects almost identically from either side, so the
+        synthetic subject yields very nearly the right answer from the wrong view. What
+        makes a wrong-side capture bad on a real patient is OCCLUSION: the far leg is
+        inferred rather than seen, and MediaPipe's confidence in it is misplaced. The
+        harness projects every landmark whether or not a body would hide it, so it
+        cannot reproduce that, and a test asserting "the value must be wrong" would
+        assert something this harness can never show.
+
+        So the requirement is that the pipeline SAYS SO. The operator re-captures the
+        movement; nothing has to guess how wrong the number was.
+        """
+        _, samples = rom_samples(movement="knee_flexion_left", view="rightside")
+        cal = ROMCalibrator(normalised_input=True, aspect_ratio=1280 / 720)
+        for sample in samples:
+            cal.add_sample(sample, view="leftside")
+
+        assert cal.observed_view("leftside") == "rightside"
+        warnings = cal.orientation_warnings("knee_flexion_left")
+        assert warnings, "a hold performed from the wrong side raised no warning"
+        assert "knee_flexion_left" in warnings[0]
+        assert cal.finalize("edge", movement="knee_flexion_left").orientation_warnings
+
+    @pytest.mark.parametrize("view", ["front", "back", "leftside", "rightside"])
+    def test_every_capture_view_is_recognised(self, view):
+        """
+        A detector that cannot name a correct capture is worse than none: it would warn
+        on every hold and train the operator to ignore it.
+        """
+        _, samples = rom_samples(movement="knee_flexion_left", view=view)
+        cal = ROMCalibrator(normalised_input=True, aspect_ratio=1280 / 720)
+        for sample in samples:
+            cal.add_sample(sample, view=view)
+        assert cal.observed_view(view) == view
+
+    def test_a_correctly_captured_hold_raises_no_warning(self):
+        view, samples = rom_samples(movement="knee_flexion_left")
+        result = run_rom(samples, view)
+        assert result.orientation_warnings == []
+
+    def test_the_rom_and_posture_detectors_cannot_disagree(self):
+        """
+        Both calibrators answer "which way was the subject actually facing" from the
+        same frames, and a second, subtly different copy of that rule is how they would
+        come to give different answers. They share one implementation; this pins it.
+        """
+        from app.core.pose.calibration_v2 import PostureCalibrator
+
+        for actual in ("front", "leftside", "rightside", "back"):
+            _, samples = rom_samples(movement="knee_flexion_left", view=actual)
+            rom = ROMCalibrator(normalised_input=True, aspect_ratio=1280 / 720)
+            posture = PostureCalibrator(normalised_input=True, aspect_ratio=1280 / 720)
+            for sample in samples:
+                rom.add_sample(sample, view="front")
+                posture.add_sample(sample, view="front")
+            assert rom.observed_view("front") == posture.observed_view("front")
+
+    def test_identical_frames_report_zero_spread_not_false_confidence(self):
+        view, samples = rom_samples(n=60, jitter_px=0.0)
+        frozen = [samples[0]] * 60
+        result = run_rom(frozen, view)
+        assert_no_fabrication(result, "identical frames")
+
+    def test_values_outside_physical_possibility_are_withheld(self):
+        """
+        A knee cannot bend 200 degrees. Per-frame filtering must drop the impossible
+        frames BEFORE aggregating - checking only the median lets a minority survive
+        into the spread that decides whether the value is shown as confident.
+        """
+        view, samples = rom_samples()
+        for sample in samples[:20]:
+            sample["pose"]["27"] = [0.5, 0.05, 0.0, 0.99]
+            sample["pose_world"]["27"] = [0.0, 2.0, 0.0, 0.99]
+        result = run_rom(samples, view)
+        metric = result.metrics["rom_knee_flexion_left"]
+        if metric.value is not None:
+            lo, hi = (0.0, 160.0)
+            assert lo <= metric.value <= hi, f"reported {metric.value}, outside physical range"
+        assert_no_fabrication(result, "impossible frames mixed in")
+
+    def test_unsupported_metrics_never_carry_a_value_or_a_normal_range(self):
+        view, samples = rom_samples()
+        result = run_rom(samples, view)
+        metric = result.metrics["rom_cervical_rotation"]
+        assert metric.value is None
+        assert metric.status == Status.UNSUPPORTED
+        assert metric.normal_range is None
+        assert metric.detail
+
+    def test_a_missing_aspect_ratio_is_flagged_not_guessed_silently(self):
+        """
+        Normalised landmarks carry no aspect ratio. Assuming one skews every angle, so
+        the assumption has to be visible on the result rather than buried.
+        """
+        view, samples = rom_samples()
+        cal = ROMCalibrator(normalised_input=True, aspect_ratio=None)
+        for sample in samples:
+            cal.add_sample(sample, view=view)
+        assert cal.finalize("edge").aspect_assumed is True
+
+    @pytest.mark.parametrize("width,height", [(1280, 720), (1920, 1080), (640, 480)])
+    def test_angles_survive_every_common_frame_size(self, width, height):
+        view, samples = rom_samples(width=width, height=height)
+        result = run_rom(samples, view, width=width, height=height)
+        assert result.metrics["rom_knee_flexion_left"].value == pytest.approx(120.0, abs=5.0)
+
+    @pytest.mark.parametrize("posed", [5.0, 45.0, 90.0, 140.0])
+    def test_restricted_and_full_range_are_both_measured(self, posed):
+        """
+        A certification that only ever sees healthy values proves nothing about the
+        reading a restricted joint produces - and a restricted joint is the entire
+        reason a patient is being screened.
+        """
+        view, samples = rom_samples(pose=Pose(knee_flexion_left=posed))
+        result = run_rom(samples, view)
+        assert result.metrics["rom_knee_flexion_left"].value == pytest.approx(posed, abs=5.0)
+
+    def test_a_metric_the_hold_did_not_exercise_is_not_reported_as_a_finding(self):
+        """
+        During a knee hold every other joint is at rest, and the calibrator computes
+        them all from the same frames. A resting shoulder reads near zero elevation,
+        which against a 165-180 degree normal range is a catastrophic restriction.
+
+        The service is what filters these out. This pins the reason it must: the
+        calibrator does produce them, so nothing downstream may assume otherwise.
+        """
+        view, samples = rom_samples()
+        result = run_rom(samples, view)
+        resting = result.metrics["rom_shoulder_flexion_left"]
+        if resting.value is not None and resting.status in FABRICATED:
+            assert resting.value < 60.0, (
+                "a resting arm read as real shoulder range; the assumption behind the "
+                "service's metric filter no longer holds"
+            )

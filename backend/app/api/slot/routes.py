@@ -7,6 +7,8 @@ This module provides REST API endpoints for slot management including:
 - Releasing slot locks
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query, HTTPException
 from datetime import date
 from app.core.dependencies import get_current_user
@@ -24,7 +26,16 @@ router = APIRouter(prefix="/slots", tags=["Slots"])
 @router.get("/{service_id}/available", response_model=AvailableSlotsResponse)
 async def get_available_slots(
     service_id: str,
-    date: date = Query(..., description="Date to check slots (YYYY-MM-DD format)")
+    date: date = Query(..., description="Date to check slots (YYYY-MM-DD format)"),
+    clinicianId: Optional[str] = Query(
+        None,
+        description=(
+            "Restrict to one clinician's calendar. When given, the answer honours that "
+            "clinician's weekly hours, time off and existing appointments across every "
+            "service - rather than the service-wide 8am-8pm grid, which offers times "
+            "nobody is available to deliver."
+        ),
+    ),
 ):
     """
     Get available time slots for a service on a specific date.
@@ -45,7 +56,7 @@ async def get_available_slots(
     Example:
         GET /api/slots/cm5abc123xyz/available?date=2026-02-24
     """
-    result = await SlotService.get_available_slots(service_id, date)
+    result = await SlotService.get_available_slots(service_id, date, clinicianId)
     return result
 
 
@@ -78,7 +89,8 @@ async def lock_slot(
     result = await SlotService.lock_slot(
         request.serviceId,
         current_user.id,
-        request.slotTime
+        request.slotTime,
+        getattr(request, "clinicianId", None),
     )
     return result
 

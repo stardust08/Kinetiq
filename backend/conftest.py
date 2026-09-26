@@ -102,3 +102,41 @@ def test_user_token(test_user_id):
     """Generate an authentication token for the test user."""
     token = TokenService.create_access_token(test_user_id, "USER")
     return token
+
+
+@pytest.fixture(autouse=True)
+def unsupervised_screening_by_default(monkeypatch):
+    """
+    Turn the supervised-screening requirement off for the suite by default.
+
+    Supervision - a patient may only start a capture inside a consultation a clinician
+    has unlocked (app/core/screening_gate.py) - arrived after most of this suite was
+    written. Those tests are about other things: the response envelope, screening-credit
+    arithmetic, landmark validation. Making every one of them mint a video session and a
+    token to reach the code it actually tests would bury the subject of the test in
+    setup, and would couple a posture-metrics test to the consultation module.
+
+    So the default here is off, and the tests that are about the gate turn it back on
+    explicitly:
+
+        def test_a_patient_cannot_start_unsupervised(supervised_screening):
+            ...
+
+    The production default is ON - see Settings.SUPERVISED_SCREENING_REQUIRED. An
+    autouse fixture that relaxed a security rule without a test asserting the rule holds
+    would be how the rule quietly stopped existing, which is why
+    app/core/test_screening_gate.py exercises both sides of it.
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "SUPERVISED_SCREENING_REQUIRED", False, raising=False)
+    yield
+
+
+@pytest.fixture
+def supervised_screening(monkeypatch):
+    """Opt back in to the production rule for tests that are about the gate itself."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "SUPERVISED_SCREENING_REQUIRED", True, raising=False)
+    yield

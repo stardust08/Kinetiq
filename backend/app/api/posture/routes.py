@@ -13,8 +13,11 @@ Implements requirements from clinical-posture-analysis-migration spec:
 - SR-7: Rate limit analysis requests (max 10 per day per user)
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 from app.core.dependencies import get_current_active_user
+from app.core.screening_gate import authorise_screening, consume_authorisation
 from app.api.posture.schemas import (
     StartAnalysisRequest,
     ProcessFrameRequest,
@@ -73,13 +76,27 @@ async def start_analysis(
         - AC-3.4: Prevent assessment start if no valid bookings
     """
     from app.api.posture.service import PostureAnalysisService
-    
-    # Call service to start analysis
+
+    # Who is allowed to begin a capture, and under whose supervision. A clinician or
+    # admin may start one directly; a patient needs the authorisation their clinician
+    # issued inside the video consultation. See app/core/screening_gate.py for why the
+    # patient cannot start their own.
+    authorisation = await authorise_screening(
+        user,
+        request.bookingId,
+        "POSTURE",
+        screening_token=request.screeningToken,
+        patient_id=request.patientId,
+    )
+
+    # The analysis belongs to the patient whichever of them pressed start, so the
+    # service is always given the patient's id.
     result = await PostureAnalysisService.start_analysis(
-        user_id=user.id,
+        user_id=authorisation.patient_id,
         booking_id=request.bookingId
     )
-    
+    result["supervision"] = authorisation.to_dict()
+
     return {"data": result}
 
 
@@ -154,16 +171,40 @@ async def finalize_analysis(
         - DR-3: Link each analysis to specific booking
     """
     from app.api.posture.service import PostureAnalysisService
-    
-    # Call service to finalize analysis
-    # This performs atomic transaction: calculate metrics + save analysis + deduct count
+
+    # Re-checked here rather than trusted from start-analysis: the two calls are
+    # minutes apart, and an authorisation the clinician withdrew in between must not
+    # still produce a stored analysis.
+    authorisation = await authorise_screening(
+        user,
+        request.bookingId,
+        "POSTURE",
+        screening_token=request.screeningToken,
+        patient_id=request.patientId,
+    )
+
+    # This performs an atomic transaction: calculate metrics + save analysis + deduct count
     result = await PostureAnalysisService.finalize_analysis(
-        user_id=user.id,
+        user_id=authorisation.patient_id,
         booking_id=request.bookingId,
         session_id=request.sessionId,
         landmarks_data=request.landmarksData
     )
-    
+
+    analysis_id = _analysis_id_from(result)
+    if analysis_id:
+        # The authorisation is spent on the finished analysis, not at start: a capture
+        # the patient abandoned halfway should leave the unlock usable rather than
+        # making the clinician issue another one for work that produced nothing.
+        await consume_authorisation(authorisation, analysis_id)
+        await _attach_draft_plan(
+            analysis_id=analysis_id,
+            analysis_type="POSTURE",
+            patient_id=authorisation.patient_id,
+            booking_id=request.bookingId,
+            result=result,
+        )
+
     return {"data": result}
 
 
@@ -435,3 +476,56 @@ async def validate_booking(bookingId: str, user = Depends(get_current_active_use
     )
     
     return {"data": result}
+
+
+
+def _analysis_id_from(result) -> Optional[str]:
+    """
+    Pull the stored analysis id out of whatever shape the service returned.
+
+    The three analysis services return slightly different envelopes - one nests the row
+    under "analysis", another returns it flat - and the two things that happen after a
+    finalize (spending the screening authorisation, generating the draft exercise plan)
+    need the id from all of them. Reading it in one helper beats three call sites each
+    guessing.
+    """
+    if not isinstance(result, dict):
+        return getattr(result, "id", None)
+    analysis = result.get("analysis")
+    if isinstance(analysis, dict):
+        return analysis.get("id")
+    if analysis is not None:
+        return getattr(analysis, "id", None)
+    return result.get("id") or result.get("analysisId")
+
+
+async def _attach_draft_plan(
+    *, analysis_id: str, analysis_type: str, patient_id: str, booking_id: str, result
+):
+    """
+    Generate the draft exercise plan for a finished screening.
+
+    Deliberately never raises. The patient has already performed the capture and the
+    analysis is already stored; failing their result because the recommendation engine
+    tripped over an unfamiliar payload would throw away the part of the work that
+    matters to keep the part that does not.
+    """
+    try:
+        from app.api.exercise.service import ExercisePlanService
+
+        plan = await ExercisePlanService.generate_for_analysis(
+            analysis_id=analysis_id,
+            analysis_type=analysis_type,
+            patient_id=patient_id,
+            booking_id=booking_id,
+        )
+        if plan is not None and isinstance(result, dict):
+            result["exercisePlanId"] = plan.id
+    except Exception:  # pragma: no cover - a plan is a bonus, not the result
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "draft exercise plan generation failed for %s analysis %s",
+            analysis_type,
+            analysis_id,
+        )

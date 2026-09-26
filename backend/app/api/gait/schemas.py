@@ -7,11 +7,35 @@ from datetime import datetime
 
 class StartGaitRequest(BaseModel):
     bookingId: str = Field(..., description="Booking ID with remaining screening counts")
+    screeningToken: Optional[str] = Field(
+        None,
+        description=(
+            "One-shot authorisation minted when a clinician unlocks the capture in a "
+            "video consultation. Required for a patient starting their own screening; "
+            "ignored when a clinician or admin starts one."
+        ),
+    )
+    patientId: Optional[str] = Field(
+        None,
+        description="Staff only: whose screening this is. Defaults to the booking owner.",
+    )
 
 
 class FinalizeGaitRequest(BaseModel):
     sessionId: str
     bookingId: str
+    screeningToken: Optional[str] = Field(
+        None,
+        description=(
+            "One-shot authorisation minted when a clinician unlocks the capture in a "
+            "video consultation. Required for a patient starting their own screening; "
+            "ignored when a clinician or admin starts one."
+        ),
+    )
+    patientId: Optional[str] = Field(
+        None,
+        description="Staff only: whose screening this is. Defaults to the booking owner.",
+    )
     gaitData: Dict[str, Any] = Field(
         ...,
         description="""

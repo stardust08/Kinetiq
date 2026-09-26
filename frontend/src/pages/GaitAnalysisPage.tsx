@@ -1,5 +1,8 @@
 import { useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSupervisedScreening } from '../hooks/useSupervisedScreening';
+import SupervisionBanner from '../components/video/SupervisionBanner';
+import SuggestedExercises from '../components/exercise/SuggestedExercises';
 import { useGaitAnalysis } from '../hooks/useGaitAnalysis';
 import GaitWebcamCapture, { GaitCaptureResult } from '../components/gait/GaitWebcamCapture';
 import { GaitMetricsDisplay } from '../components/gait/GaitMetricsDisplay';
@@ -14,6 +17,14 @@ type PageStep = 'select_booking' | 'instructions' | 'capturing' | 'processing' |
 const PAGE_STEPS: PageStep[] = ['instructions', 'capturing', 'processing', 'results'];
 
 export default function GaitAnalysisPage() {
+  // Picks up the one-shot authorisation if a clinician unlocked this capture in a
+  // video consultation. A patient who arrives without one is refused by the server -
+  // see backend app/core/screening_gate.py.
+  // Called for its effect: it moves the one-shot authorisation a clinician issued
+  // in the video consultation into the store the API layer reads, and clears it when
+  // this page unmounts. SupervisionBanner below renders the state of it.
+  useSupervisedScreening();
+
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const bookingIdFromUrl = searchParams.get('bookingId');
@@ -110,6 +121,7 @@ export default function GaitAnalysisPage() {
       <div className="absolute top-0 right-1/4 w-[400px] h-[250px] rounded-full blur-[100px] bg-[#2F86C7]/6 pointer-events-none" />
 
       <div className="relative z-10 max-w-4xl mx-auto px-4 py-8">
+        <SupervisionBanner />
         {/* Page header */}
         <div className="flex items-center gap-3 mb-6">
           <BackButton onClick={() => navigate('/bookings')} />
@@ -297,6 +309,16 @@ export default function GaitAnalysisPage() {
                 <GaitMetricsDisplay metrics={analysisResult.analysis.metrics} />
               )}
             </div>
+
+            {/* What this screening suggests. A suggestion, not a prescription - the
+                reviewed version reaches the patient under "My plan". */}
+            {analysisResult.analysis?.id && (
+              <SuggestedExercises
+                analysisType="GAIT"
+                analysisId={analysisResult.analysis.id}
+                dark
+              />
+            )}
 
             {/* Actions */}
             <div className="flex flex-wrap gap-3 pb-6">

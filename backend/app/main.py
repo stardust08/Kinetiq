@@ -5,8 +5,11 @@ This module creates and configures the FastAPI application with all
 necessary middleware, lifecycle events, and routes.
 """
 
+import os
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.db.client import connect_db, disconnect_db
 from app.api.router import api_router
@@ -67,7 +70,20 @@ def create_app() -> FastAPI:
     
     # Include API routes
     app.include_router(api_router)
-    
+
+    # Exercise demonstration videos.
+    #
+    # The exercise library ships without video URLs - a real one cannot be invented in
+    # a source file - so a deployment uploads its own through the admin API and they
+    # are served from here. Created on startup rather than on first upload so that a
+    # fresh checkout does not 404 the whole mount.
+    os.makedirs(settings.EXERCISE_VIDEO_DIR, exist_ok=True)
+    app.mount(
+        "/static/exercise-videos",
+        StaticFiles(directory=settings.EXERCISE_VIDEO_DIR),
+        name="exercise-videos",
+    )
+
     return app
 
 

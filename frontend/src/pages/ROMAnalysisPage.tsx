@@ -8,6 +8,9 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSupervisedScreening } from '../hooks/useSupervisedScreening';
+import SupervisionBanner from '../components/video/SupervisionBanner';
+import SuggestedExercises from '../components/exercise/SuggestedExercises';
 import { useQuery } from '@tanstack/react-query';
 import BookingSelectionStep from '../components/booking/BookingSelectionStep';
 import { Breadcrumb } from '../components/layout/Breadcrumb';
@@ -22,6 +25,14 @@ import { previousValuesFor } from '../lib/previousAssessment';
 type Step = 'select_booking' | 'instructions' | 'capturing' | 'analysing' | 'complete';
 
 export default function ROMAnalysisPage() {
+  // Picks up the one-shot authorisation if a clinician unlocked this capture in a
+  // video consultation. A patient who arrives without one is refused by the server -
+  // see backend app/core/screening_gate.py.
+  // Called for its effect: it moves the one-shot authorisation a clinician issued
+  // in the video consultation into the store the API layer reads, and clears it when
+  // this page unmounts. SupervisionBanner below renders the state of it.
+  useSupervisedScreening();
+
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const bookingIdFromUrl = searchParams.get('bookingId');
@@ -116,6 +127,7 @@ export default function ROMAnalysisPage() {
     <div className="min-h-screen bg-[#030712] py-8">
       <div className="max-w-5xl mx-auto px-4">
         <BackButton />
+        <SupervisionBanner />
         <Breadcrumb
           items={[
             { label: 'Home', href: '/' },
@@ -210,6 +222,9 @@ export default function ROMAnalysisPage() {
               qualityFlags={result.qualityFlags}
               previousValues={previousValuesFor(result, history ?? [])}
             />
+
+            <SuggestedExercises analysisType="ROM" analysisId={result.id} dark />
+
             <button
               onClick={() => navigate('/')}
               className="px-5 py-2.5 rounded-lg border border-white/15 text-slate-200 text-sm"

@@ -80,6 +80,10 @@ class FakeDB:
         self.booking = FakeTable(booking)
         self.postureanalysis = FakeTable()
         self.poselandmarks = FakeTable()
+        # The screening gate looks for a live consultation. Empty here: these tests act
+        # as a patient, and the suite's default turns supervision off - see the
+        # `unsupervised_screening_by_default` fixture in conftest.py.
+        self.videosession = FakeTable(None)
 
 
 def a_booking(remaining: int = 5, status: str = "CONFIRMED", user_id: str = "user_1"):
@@ -112,6 +116,9 @@ def client(monkeypatch):
     )
     fake = FakeDB(booking=a_booking())
     monkeypatch.setattr("app.api.posture.service.db", fake, raising=False)
+    # start-analysis and finalize-analysis both consult the screening gate before the
+    # service, and the gate holds its own reference to the client.
+    monkeypatch.setattr("app.core.screening_gate.db", fake, raising=False)
     with TestClient(app) as c:
         c.fake_db = fake  # type: ignore[attr-defined]
         yield c

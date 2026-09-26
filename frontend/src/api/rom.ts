@@ -7,6 +7,7 @@
 
 import { apiClient } from './client';
 import type { MetricsPayload, QualityFlags } from '../types/metrics';
+import { currentScreeningToken } from '../store/screeningStore';
 
 // Every route in this app is mounted under /api, and the axios client's baseURL is
 // the bare host. Posture and gait both carry the prefix here; ROM did not, so all
@@ -42,7 +43,14 @@ export interface ROMAnalysis {
 export const startAnalysis = async (bookingId: string) => {
   const response = await apiClient.post<{
     data: { sessionId: string; bookingId: string; remainingCount: number; movements: string[] };
-  }>(`${ROM_BASE_URL}/start-analysis`, { bookingId });
+  }>(`${ROM_BASE_URL}/start-analysis`, {
+    bookingId,
+    // A patient may only begin a capture their clinician unlocked in a consultation.
+    // The token is held for the duration of one capture; see store/screeningStore.ts.
+    // A clinician or admin driving the capture themselves sends none and is authorised
+    // by their role.
+    screeningToken: currentScreeningToken(),
+  });
   return response.data.data;
 };
 
@@ -53,7 +61,12 @@ export const finalizeAnalysis = async (request: {
 }): Promise<ROMAnalysis> => {
   const response = await apiClient.post<{
     data: { analysis: ROMAnalysis; remainingCount: number };
-  }>(`${ROM_BASE_URL}/finalize-analysis`, request);
+  }>(`${ROM_BASE_URL}/finalize-analysis`, {
+    ...request,
+    // Re-presented here because the server re-checks: an authorisation the clinician
+    // withdrew mid-capture must not still produce a stored analysis.
+    screeningToken: currentScreeningToken(),
+  });
   return response.data.data.analysis;
 };
 

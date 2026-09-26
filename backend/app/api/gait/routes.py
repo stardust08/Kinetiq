@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter, Depends
 from app.core.dependencies import get_current_active_user
+from app.api.posture.routes import _analysis_id_from, _attach_draft_plan
+from app.core.screening_gate import authorise_screening, consume_authorisation
 from app.api.gait.schemas import StartGaitRequest, FinalizeGaitRequest, CancelGaitRequest
 
 gait_router = APIRouter(prefix="/gait", tags=["gait"])
@@ -13,10 +15,21 @@ async def start_gait_analysis(
     user=Depends(get_current_active_user)
 ):
     from app.api.gait.service import GaitAnalysisService
+
+    # Same gate as posture and ROM: staff start a capture directly, a patient needs the
+    # authorisation issued in their video consultation.
+    authorisation = await authorise_screening(
+        user,
+        request.bookingId,
+        "GAIT",
+        screening_token=request.screeningToken,
+        patient_id=request.patientId,
+    )
     result = await GaitAnalysisService.start_analysis(
-        user_id=user.id,
+        user_id=authorisation.patient_id,
         booking_id=request.bookingId
     )
+    result["supervision"] = authorisation.to_dict()
     return {"data": result}
 
 
@@ -26,12 +39,31 @@ async def finalize_gait_analysis(
     user=Depends(get_current_active_user)
 ):
     from app.api.gait.service import GaitAnalysisService
+
+    authorisation = await authorise_screening(
+        user,
+        request.bookingId,
+        "GAIT",
+        screening_token=request.screeningToken,
+        patient_id=request.patientId,
+    )
     result = await GaitAnalysisService.finalize_analysis(
-        user_id=user.id,
+        user_id=authorisation.patient_id,
         booking_id=request.bookingId,
         session_id=request.sessionId,
         gait_data=request.gaitData
     )
+
+    analysis_id = _analysis_id_from(result)
+    if analysis_id:
+        await consume_authorisation(authorisation, analysis_id)
+        await _attach_draft_plan(
+            analysis_id=analysis_id,
+            analysis_type="GAIT",
+            patient_id=authorisation.patient_id,
+            booking_id=request.bookingId,
+            result=result,
+        )
     return {"data": result}
 
 

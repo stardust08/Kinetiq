@@ -44,6 +44,11 @@ class FakeTable:
     async def find_first(self, **kwargs):
         return self.record
 
+    async def find_unique(self, **kwargs):
+        # The screening gate loads the booking by id before the service runs. Without
+        # this the fake raises AttributeError and every route test 500s.
+        return self.record
+
     async def find_many(self, **kwargs):
         return self.rows
 
@@ -59,6 +64,9 @@ class FakeDB:
     def __init__(self, booking=None):
         self.booking = FakeTable(booking)
         self.romanalysis = FakeTable()
+        # The gate looks for a live consultation on the staff path. Empty here: these
+        # tests act as a patient, and the suite's default turns supervision off.
+        self.videosession = FakeTable(None)
 
 
 def a_booking(remaining: int = 3, status: str = "CONFIRMED"):
@@ -85,11 +93,14 @@ def client(monkeypatch):
     async def _unauth(request, exc):
         return JSONResponse(status_code=401, content={"detail": str(exc)})
 
+    # `role` matters now: the screening gate refuses a caller whose role it cannot
+    # parse, so a user double without one is rejected before reaching the service.
     app.dependency_overrides[get_current_active_user] = lambda: SimpleNamespace(
-        id="user_1", status="ACTIVE"
+        id="user_1", status="ACTIVE", role="USER"
     )
     fake = FakeDB(booking=a_booking())
     monkeypatch.setattr("app.api.rom.service.db", fake, raising=False)
+    monkeypatch.setattr("app.core.screening_gate.db", fake, raising=False)
     with TestClient(app) as c:
         c.fake_db = fake  # type: ignore[attr-defined]
         yield c

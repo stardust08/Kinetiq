@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import { currentScreeningToken } from '../store/screeningStore';
 
 const GAIT_BASE_URL = '/api/gait';
 
@@ -36,14 +37,29 @@ export interface FinalizeGaitRequest {
 }
 
 export async function startGaitAnalysis(request: StartGaitRequest) {
-  const response = await apiClient.post(`${GAIT_BASE_URL}/start-analysis`, request);
+  const response = await apiClient.post(`${GAIT_BASE_URL}/start-analysis`, {
+    ...request,
+    // A patient may only begin a capture their clinician unlocked in a video
+    // consultation. Staff driving the capture send none and are authorised by role.
+    // See store/screeningStore.ts and backend app/core/screening_gate.py.
+    screeningToken: currentScreeningToken(),
+  });
   return response.data.data;
 }
 
 export async function finalizeGaitAnalysis(request: FinalizeGaitRequest) {
-  const response = await apiClient.post(`${GAIT_BASE_URL}/finalize-analysis`, request, {
-    timeout: 90000, // 90 seconds - gait processing is heavier
-  });
+  const response = await apiClient.post(
+    `${GAIT_BASE_URL}/finalize-analysis`,
+    {
+      ...request,
+      // Re-presented because the server re-checks: an authorisation withdrawn
+      // mid-capture must not still produce a stored analysis.
+      screeningToken: currentScreeningToken(),
+    },
+    {
+      timeout: 90000, // 90 seconds - gait processing is heavier
+    },
+  );
   return response.data.data;
 }
 

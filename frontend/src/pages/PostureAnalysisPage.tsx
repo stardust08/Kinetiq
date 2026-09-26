@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSupervisedScreening } from '../hooks/useSupervisedScreening';
+import SupervisionBanner from '../components/video/SupervisionBanner';
 import BookingSelectionStep from '../components/booking/BookingSelectionStep';
 import InstructionsPanel from '../components/posture/InstructionsPanel';
 import WebcamCapture, { FrameData, BestFrameData, PoseView } from '../components/posture/WebcamCapture';
@@ -72,6 +74,14 @@ export function toBackendSample(frame: { landmarks: any; worldLandmarks?: Array<
 }
 
 export default function PostureAnalysisPage() {
+  // Picks up the one-shot authorisation if a clinician unlocked this capture in a
+  // video consultation. A patient who arrives without one is refused by the server -
+  // see backend app/core/screening_gate.py.
+  // Called for its effect: it moves the one-shot authorisation a clinician issued
+  // in the video consultation into the store the API layer reads, and clears it when
+  // this page unmounts. SupervisionBanner below renders the state of it.
+  useSupervisedScreening();
+
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -378,6 +388,7 @@ export default function PostureAnalysisPage() {
             ]}
             className="mb-4"
           />
+          <SupervisionBanner />
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold text-white mb-1">

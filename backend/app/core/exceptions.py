@@ -80,3 +80,34 @@ class UnauthorizedException(AppException):
             message: Error message describing the authorization failure
         """
         super().__init__(message, 401)
+
+
+class ForbiddenException(AppException):
+    """
+    Exception raised when an authenticated caller lacks permission (HTTP 403).
+
+    Distinct from UnauthorizedException, which is about *who you are*: 401 means
+    "log in", 403 means "you are logged in and the answer is still no". Collapsing
+    the two - as the codebase did before roles existed, by raising 401 for both -
+    makes the frontend clear the token and bounce a clinician to the login screen
+    when they merely opened a page meant for admins.
+
+    Prefer NotFoundException over this one when a 403 would confirm that a resource
+    exists. See app/core/authz.py.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, 403)
+
+
+class ConflictException(AppException):
+    """
+    Exception raised when a request collides with current state (HTTP 409).
+
+    Used for double-booked slots and for a second attempt to start a consultation
+    that is already live - cases where the request was well-formed and permitted,
+    and simply arrived too late.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, 409)

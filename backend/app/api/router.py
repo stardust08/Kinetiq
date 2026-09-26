@@ -10,6 +10,10 @@ from app.api.posture.routes import posture_router
 from app.api.slot.routes import router as slot_router
 from app.api.gait.routes import gait_router
 from app.api.rom.routes import rom_router
+from app.api.admin.routes import admin_router
+from app.api.clinician.routes import clinician_router
+from app.api.exercise.routes import exercise_router
+from app.api.video.routes import video_router
 # from app.api.pose.routes import router as pose_router
 
 api_router = APIRouter(prefix="/api", tags=["api"])
@@ -25,4 +29,8 @@ api_router.include_router(posture_router)
 api_router.include_router(slot_router)
 api_router.include_router(gait_router)
 api_router.include_router(rom_router)
+api_router.include_router(admin_router)
+api_router.include_router(clinician_router)
+api_router.include_router(exercise_router)
+api_router.include_router(video_router)
 # api_router.include_router(pose_router)

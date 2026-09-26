@@ -322,6 +322,15 @@ export interface PaymentCompleteResponse {
  */
 export interface StartAnalysisRequest {
   bookingId: string;
+  /**
+   * One-shot authorisation from the video consultation in which a clinician unlocked
+   * this capture. Optional here because staff starting a capture are authorised by
+   * their role; a patient without one is refused. Usually left unset - the API layer
+   * fills it in from store/screeningStore.ts.
+   */
+  screeningToken?: string;
+  /** Staff only: whose screening this is. Defaults to the booking owner. */
+  patientId?: string;
 }
 
 /**
@@ -341,6 +350,8 @@ export interface FinalizeAnalysisRequest {
   sessionId: string;
   bookingId: string;
   landmarksData: Record<string, any>;
+  screeningToken?: string;
+  patientId?: string;
 }
 
 /**

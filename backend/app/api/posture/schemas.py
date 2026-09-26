@@ -28,6 +28,22 @@ class StartAnalysisRequest(BaseModel):
         ...,
         description="Booking ID to use for this analysis. Must have remaining screening counts."
     )
+    screeningToken: Optional[str] = Field(
+        None,
+        description=(
+            "One-shot authorisation minted when a clinician unlocks the capture in a "
+            "video consultation. Required for a patient starting their own screening; "
+            "ignored when a clinician or admin starts one. See "
+            "app/core/screening_gate.py."
+        ),
+    )
+    patientId: Optional[str] = Field(
+        None,
+        description=(
+            "Staff only: whose screening this is. Defaults to the booking owner, and "
+            "a patient supplying somebody else's id is rejected."
+        ),
+    )
 
 
 class ProcessFrameRequest(BaseModel):
@@ -115,6 +131,18 @@ class FinalizeAnalysisRequest(BaseModel):
         description="Collected landmarks data from all processed frames, organized by pose type"
     )
 
+    screeningToken: Optional[str] = Field(
+        None,
+        description=(
+            "One-shot authorisation minted when a clinician unlocks the capture in a "
+            "video consultation. Required for a patient starting their own screening; "
+            "ignored when a clinician or admin starts one."
+        ),
+    )
+    patientId: Optional[str] = Field(
+        None,
+        description="Staff only: whose screening this is. Defaults to the booking owner.",
+    )
 
 class CancelAnalysisRequest(BaseModel):
     """Request to cancel analysis session without deducting screening count."""

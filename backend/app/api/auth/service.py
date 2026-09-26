@@ -12,7 +12,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 from app.core.exceptions import BadRequestException, UnauthorizedException
 from app.db.client import db
+import logging
+
+from app.core.config import settings
 from app.services.sns_service import send_otp as send_otp_sms
+
+logger = logging.getLogger(__name__)
 
 
 class OTPService:
@@ -92,18 +97,41 @@ class OTPService:
                 "isUsed": False
             }
         )
-        print("Current otp", otp)
-        # Send OTP via AWS SNS
+        # Deliver the code by SMS. A failure here is deliberately not fatal: the OTP is
+        # already stored, and refusing the request would leave the user unable to retry
+        # for a minute because of the rate limit.
         try:
             if not phone.startswith("+91"):
                 phone = "+91" + phone
-            result =  send_otp_sms(phone, otp)
-            if result["success"]:
-                print(f"[INFO] SMS sent successfully to {phone}")
-            else:
-                print(f"[WARNING] SMS failed to send to {phone}")
-        except Exception as e:
-            print(f"[ERROR] SNS service error: {e}")
+            result = send_otp_sms(phone, otp)
+        except Exception as exc:  # noqa: BLE001 - SMS must never break login
+            logger.warning("SMS service raised while sending to %s: %s", phone, exc)
+            result = {"success": False, "configured": True, "message": str(exc)}
+
+        if result.get("success"):
+            logger.info("OTP sent by SMS to %s", phone)
+        elif not result.get("configured", True):
+            # No SMS credentials. Normal in local development, and a misconfiguration in
+            # production - so it is said plainly rather than swallowed.
+            logger.warning(
+                "SMS is not configured, so the OTP for %s was not delivered. %s",
+                phone,
+                "It is logged below because DEBUG is on."
+                if settings.DEBUG
+                else "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or users cannot sign in.",
+            )
+        else:
+            logger.warning("SMS failed to send to %s: %s", phone, result.get("message"))
+
+        # The code itself is logged ONLY in debug.
+        #
+        # It used to be printed unconditionally, which put live login codes into
+        # production logs - anybody who could read the logs could sign in as anybody who
+        # had just requested an OTP. Local development still needs a way to read the
+        # code when there is no SMS, so it is gated on DEBUG rather than removed.
+        if settings.DEBUG:
+            logger.info("[DEBUG] OTP for %s is %s", phone, otp)
+
         return otp
     @staticmethod
     async def verify_otp(phone: str, otp: str) -> tuple:

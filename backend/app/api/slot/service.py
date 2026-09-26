@@ -133,7 +133,8 @@ class SlotService:
     @staticmethod
     async def get_available_slots(
         service_id: str,
-        target_date: date
+        target_date: date,
+        clinician_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get available slots for a service on a specific date.
@@ -169,9 +170,30 @@ class SlotService:
         service = await db.service.find_unique(where={"id": service_id})
         if not service:
             raise NotFoundException(f"Service with ID '{service_id}' not found")
-        
+
         # Step 2: Parse duration and generate all slots
         duration = SlotService.parse_duration(service.duration)
+
+        # When the patient is booking a particular clinician, that clinician's calendar
+        # is the answer and the service-wide 08:00-20:00 grid is not. The grid knows
+        # nothing about who works Tuesday mornings, who is on leave, or who is already
+        # booked at 10:00 for a different service - and a slot offered on those terms
+        # is one the clinic cannot honour.
+        if clinician_id:
+            from app.api.clinician.service import ClinicianService
+
+            available_slots = await ClinicianService.available_slots_for_clinician(
+                clinician_id, target_date, duration
+            )
+            return {
+                "serviceId": service.id,
+                "serviceName": service.name,
+                "clinicianId": clinician_id,
+                "date": target_date.isoformat(),
+                "duration": duration,
+                "slots": [{"slotTime": slot} for slot in available_slots],
+            }
+
         all_slots = SlotService.generate_time_slots(target_date, duration)
         
         # Step 3: Get booked slots from the database
@@ -222,7 +244,8 @@ class SlotService:
     async def lock_slot(
         service_id: str,
         user_id: str,
-        slot_time: datetime
+        slot_time: datetime,
+        clinician_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Lock a time slot for 5 minutes.
@@ -261,40 +284,78 @@ class SlotService:
         if not service:
             raise NotFoundException(f"Service with ID '{service_id}' not found")
         
-        # Step 2: Check if slot is already booked
-        existing_booking = await db.booking.find_first(
-            where={
-                "serviceId": service_id,
-                "time": slot_time,
-                "status": {"not": "CANCELLED"}
-            }
-        )
+        # Step 2: Check if slot is already booked.
+        #
+        # Scoped to the clinician when one is named. Without that scope a booking on
+        # ANY clinician blocked the hour across the whole service, so a clinic with
+        # three physiotherapists could sell one 10:00 appointment a day.
+        booking_where = {
+            "serviceId": service_id,
+            "time": slot_time,
+            "status": {"not": "CANCELLED"},
+        }
+        if clinician_id:
+            booking_where["clinicianId"] = clinician_id
+        existing_booking = await db.booking.find_first(where=booking_where)
         if existing_booking:
             raise BadRequestException("This slot is already booked")
-        
-        # Step 3: Check if slot is already locked (and not expired)
+
+        # Step 3: Check for a live hold on the same calendar.
         now = datetime.now(timezone.utc)
+        lock_key = {
+            "serviceId": service_id,
+            "slotTime": slot_time,
+            "clinicianId": clinician_id,
+        }
         existing_lock = await db.slotlock.find_first(
-            where={
-                "serviceId": service_id,
-                "slotTime": slot_time,
-                "expiresAt": {"gt": now},
-                "isReleased": False
-            }
+            where={**lock_key, "expiresAt": {"gt": now}, "isReleased": False}
         )
         if existing_lock:
+            if existing_lock.userId == user_id:
+                # The same person re-entering checkout. Extending their own hold beats
+                # telling them the slot they are holding is unavailable.
+                extended = await db.slotlock.update(
+                    where={"id": existing_lock.id},
+                    data={"expiresAt": now + timedelta(minutes=5)},
+                )
+                return {
+                    "lockId": extended.id,
+                    "serviceId": extended.serviceId,
+                    "slotTime": extended.slotTime,
+                    "expiresAt": extended.expiresAt,
+                    "message": "Slot lock extended for 5 minutes",
+                }
             raise BadRequestException("This slot is currently locked by another user")
-        
-        # Step 4: Create the lock (expires in 5 minutes)
+
+        # Step 4: Take the lock, expiring in 5 minutes.
+        #
+        # A released or expired row for the same slot is REUSED rather than inserted
+        # alongside. The unique key covers (serviceId, slotTime, clinicianId), so once
+        # any lock exists for a slot a second insert fails forever - which meant that
+        # before this, a user who abandoned checkout made that slot permanently
+        # unlockable by anybody, including themselves.
         expires_at = now + timedelta(minutes=5)
-        lock = await db.slotlock.create(
-            data={
-                "serviceId": service_id,
-                "userId": user_id,
-                "slotTime": slot_time,
-                "expiresAt": expires_at
-            }
-        )
+        stale_lock = await db.slotlock.find_first(where=lock_key)
+        if stale_lock is not None:
+            lock = await db.slotlock.update(
+                where={"id": stale_lock.id},
+                data={
+                    "userId": user_id,
+                    "expiresAt": expires_at,
+                    "isReleased": False,
+                    "lockedAt": now,
+                },
+            )
+        else:
+            lock = await db.slotlock.create(
+                data={
+                    "serviceId": service_id,
+                    "userId": user_id,
+                    "slotTime": slot_time,
+                    "clinicianId": clinician_id,
+                    "expiresAt": expires_at,
+                }
+            )
         
         # Step 5: Return lock details
         return {

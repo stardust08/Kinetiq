@@ -4,6 +4,7 @@ import { getAnalysisById } from '../api/posture';
 import AssessmentDetailView from '../components/posture/AssessmentDetailView';
 import { Breadcrumb } from '../components/layout/Breadcrumb';
 import { BackButton } from '../components/layout/BackButton';
+import SuggestedExercises from '../components/exercise/SuggestedExercises';
 
 export default function AssessmentDetailPage() {
   const { analysisId } = useParams<{ analysisId: string }>();
@@ -71,6 +72,12 @@ export default function AssessmentDetailPage() {
         </div>
 
         <AssessmentDetailView analysis={analysis} />
+
+        {/* What this screening suggests. Labelled as a suggestion, not a prescription:
+            the reviewed version reaches the patient under "My plan". */}
+        <div className="mt-6">
+          <SuggestedExercises analysisType="POSTURE" analysisId={analysis.id} dark />
+        </div>
       </div>
     </div>
   );

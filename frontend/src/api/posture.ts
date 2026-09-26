@@ -15,6 +15,7 @@
 
 import { apiClient } from './client';
 import { isRetryableError } from './errors';
+import { currentScreeningToken } from '../store/screeningStore';
 import type {
   StartAnalysisRequest,
   StartAnalysisResponse,
@@ -85,7 +86,13 @@ export const startAnalysis = async (
 ): Promise<StartAnalysisResponse> => {
   const response = await apiClient.post<{ data: StartAnalysisResponse }>(
     `${POSTURE_BASE_URL}/start-analysis`,
-    request
+    {
+      ...request,
+      // A patient may only begin a capture their clinician unlocked in a video
+      // consultation. The token is held for one capture - see store/screeningStore.ts.
+      // Staff driving the capture send none and are authorised by their role.
+      screeningToken: request.screeningToken ?? currentScreeningToken(),
+    }
   );
   return response.data.data;
 };
@@ -115,7 +122,12 @@ export const finalizeAnalysis = async (
   return retryWithBackoff(async () => {
     const response = await apiClient.post<{ data: { analysis: PostureAnalysis; remainingCount: number } }>(
       `${POSTURE_BASE_URL}/finalize-analysis`,
-      request
+      {
+        ...request,
+        // Re-presented because the server re-checks: an authorisation withdrawn
+        // mid-capture must not still produce a stored analysis.
+        screeningToken: request.screeningToken ?? currentScreeningToken(),
+      }
     );
     return response.data.data.analysis;
   });

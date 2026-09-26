@@ -7,7 +7,7 @@ available slots, slot locking, and slot release operations.
 
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 
 class AvailableSlot(BaseModel):
@@ -43,6 +43,9 @@ class AvailableSlotsResponse(BaseModel):
     
     serviceId: str = Field(..., description="Service ID")
     serviceName: str = Field(..., description="Service name")
+    clinicianId: Optional[str] = Field(
+        None, description="Echoed back when the query was scoped to one clinician."
+    )
     date: str = Field(..., description="Date in YYYY-MM-DD format")
     duration: int = Field(..., description="Slot duration in minutes")
     slots: List[AvailableSlot] = Field(..., description="List of available time slots")
@@ -60,6 +63,14 @@ class LockSlotRequest(BaseModel):
     )
     
     serviceId: str = Field(..., description="Service ID to lock slot for")
+    clinicianId: Optional[str] = Field(
+        None,
+        description=(
+            "Whose calendar the hold consumes. Null means the service-wide slot, which "
+            "is the pre-existing behaviour; naming a clinician is what lets two of them "
+            "be booked at the same hour."
+        ),
+    )
     slotTime: datetime = Field(..., description="Slot start time to lock")
 
 

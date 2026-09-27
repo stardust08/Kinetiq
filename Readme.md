@@ -2,7 +2,7 @@
 
 <br/>
 
-# 🦴 Neura-AI
+# 🦴 Kinetiq
 
 ### **Clinical posture, gait & range-of-motion screening from an ordinary webcam**
 
